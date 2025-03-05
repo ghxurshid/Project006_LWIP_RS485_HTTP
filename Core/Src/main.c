@@ -25,6 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
 #include "string.h"
+#include "Wiegand.h"
 
 /* USER CODE END Includes */
 
@@ -71,6 +72,8 @@ const osMessageQueueAttr_t mainQueue_attributes = {
 uint8_t rx_buffer_length;
 uint8_t rx_buffer[DMA_RX_BUFFER_SIZE]; // Буфер для приема
 uint8_t rx_buffer_dma[DMA_RX_BUFFER_SIZE]; // Буфер для DMA
+
+WIEGAND wg;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -100,7 +103,9 @@ extern void initialise_monitor_handles(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
+
 	initialise_monitor_handles();
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -125,7 +130,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  printf("Begin user code 2 ...\n");
+
   //HAL_UART_Receive_DMA(&huart2, rx_buffer, sizeof(rx_buffer)); // Запуск DMA приема
   /* USER CODE END 2 */
 
@@ -161,7 +166,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-  printf("Begin rtos threads ...\n");
+  //printf("Begin rtos threads ...\n");
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -348,6 +353,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : WG0_Pin */
+  GPIO_InitStruct.Pin = WG0_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(WG0_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : WG1_Pin */
+  GPIO_InitStruct.Pin = WG1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(WG1_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : DERE_Pin */
   GPIO_InitStruct.Pin = DERE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -355,12 +372,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
   HAL_GPIO_Init(DERE_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
-    printf("Stack overflow detected in task: %s\n", pcTaskName);
     // Можно перезагрузить систему или выполнить иные действия
     while (1); // Остановка системы
 }
@@ -379,7 +402,7 @@ void StartDefaultTask(void *argument)
   /* init code for LWIP */
   MX_LWIP_Init();
   /* USER CODE BEGIN 5 */
-  printf("Begin user code 5 ...\n");
+
   /* Infinite loop */
   for(;;)
   {
@@ -400,31 +423,46 @@ void StartTask02(void *argument)
 {
   /* USER CODE BEGIN StartTask02 */
   /* Infinite loop */
+	Wiegand_Init(&wg);
 
-  uint8_t cntr = 0;
-  for(;;)
-  {
-	  if (rx_buffer_length > 0)
-	  {
-		  char* data = (char*)malloc(rx_buffer_length + 1);
-		  memset(data, 0, rx_buffer_length + 1);
-		  memcpy(data, rx_buffer, rx_buffer_length);
+	for(;;)
+	{
+		if (rx_buffer_length > 0)
+		{
+			char* data = (char*)malloc(rx_buffer_length + 1);
+			memset(data, 0, rx_buffer_length + 1);
+			memcpy(data, rx_buffer, rx_buffer_length);
 
-		  printf("RS485: %s\n", data);
+			printf("RS485: %s\n", data);
 
-		  if (osMessageQueuePut(mainQueueHandle, &data, 0, osWaitForever) == osOK)
-		  {
-			  rx_buffer_length = 0;
-		  }
-	  }
+			if (osMessageQueuePut(mainQueueHandle, &data, 0, osWaitForever) == osOK)
+			{
+				rx_buffer_length = 0;
+			}
+		}
 
-	  if (cntr ++ > 70) {
-		  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-		  cntr = 0;
-	  }
+		if (Wiegand_Available(&wg))
+		{
+			uint32_t wcode = Wiegand_GetCode(&wg);
+			int wtype = Wiegand_GetWiegandType(&wg);
 
-	  osDelay(10);
-  }
+			if (wcode > 0)
+			{
+				char* data = (char*)malloc(11);
+				memset(data, 0, 11);
+				sprintf(data, "%u", wcode);
+
+				printf("Wiegand: %s\n", data);
+
+				if (osMessageQueuePut(mainQueueHandle, &data, 0, osWaitForever) == osOK)
+				{
+
+				}
+			}
+		}
+
+		osDelay(30);
+	}
   /* USER CODE END StartTask02 */
 }
 

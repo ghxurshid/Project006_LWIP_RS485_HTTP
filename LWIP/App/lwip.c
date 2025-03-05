@@ -17,6 +17,7 @@
   ******************************************************************************
   */
 
+#include "aes.h"
 #include "lwip/tcp.h"
 #include "lwip/ip_addr.h"
 #include "lwip/err.h"
@@ -40,15 +41,26 @@
 /* USER CODE BEGIN 0 */
 
 // Параметры сервера
-#define SERVER_IP "10.0.40.102"  // IP-адрес сервера
-#define SERVER_PORT 23           // Порт сервера
+#define SERVER_IP "185.74.5.250"   // IP-адрес сервера
+#define SERVER_PORT 5488           // Порт сервера
+#define SERVER_IP_TEST "10.0.40.212"   // IP-адрес сервера
+#define SERVER_PORT_TEST 23           // Порт сервера
 
 #define PHY_ADDRESS 0x01  // Адрес вашего PHY (уточните по схеме подключения)
+
+#define AES_KEY_SIZE 16
+#define AES_BLOCK_SIZE 16
 
 atomic_int IsLinkUp = 0;
 
 extern osMessageQueueId_t mainQueueHandle;
 
+uint8_t key[AES_KEY_SIZE] = {
+  0x6E, 0x6C, 0x41, 0x74,
+  0x72, 0x61, 0x69, 0x63,
+  0x41, 0x74, 0x65, 0x6E,
+  0x73, 0x6F, 0x4E, 0x65
+};
 
 /* USER CODE END 0 */
 /* Private function prototypes -----------------------------------------------*/
@@ -66,7 +78,7 @@ ip4_addr_t ipaddr;
 ip4_addr_t netmask;
 ip4_addr_t gw;
 /* USER CODE BEGIN OS_THREAD_ATTR_CMSIS_RTOS_V2 */
-#define INTERFACE_THREAD_STACK_SIZE ( 1024 )
+#define INTERFACE_THREAD_STACK_SIZE ( 2084 )
 osThreadAttr_t attributes;
 /* USER CODE END OS_THREAD_ATTR_CMSIS_RTOS_V2 */
 
@@ -85,7 +97,7 @@ void MonitorAllTasks() {
 
 	for (UBaseType_t i = 0; i < taskCount; i++) {
 		// Полный размер стека задачи
-		UBaseType_t totalStackSize = taskStatusArray[i].usStackHighWaterMark;
+		//UBaseType_t totalStackSize = taskStatusArray[i].usStackHighWaterMark;
 
 		// Минимальный остаток стека (HighWaterMark)
 		UBaseType_t remainingStack = taskStatusArray[i].usStackHighWaterMark;
@@ -105,99 +117,178 @@ void MonitorAllTasks() {
 	printf("- - - - - - - - - - - - \n");
 }
 
+void AES_Encrypt(char* buff, size_t length)
+{
+	struct AES_ctx ctx;
+
+	// �?нициализация контекста AES с заданным ключом
+	AES_init_ctx(&ctx, key);
+
+	// Шифрование данных (в данном случае ECB режим)
+	for (int i = 0 ; i < length; i += AES_BLOCKLEN)
+	{
+		AES_ECB_encrypt(&ctx, (buff + i));
+	}
+}
+
+void AES_Decrypt(char* buff, size_t length)
+{
+    struct AES_ctx ctx;
+
+    // �?нициализация контекста AES с заданным ключом
+    AES_init_ctx(&ctx, key);
+
+    // Дешифрование данных
+    for (int i = 0 ; i < length; i += AES_BLOCKLEN)
+	{
+    	AES_ECB_decrypt(&ctx, buff);
+		buff += AES_BLOCKLEN;
+	}
+}
+
+int SendDataOverSocket(const char *server_ip, uint16_t server_port, char *message)
+{
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = lwip_htons(server_port);
+    server_addr.sin_addr.s_addr = inet_addr(server_ip);
+
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+
+    int sock = lwip_socket(AF_INET, SOCK_STREAM, 0);
+    osDelay(10);
+    if (sock < 0) {
+        printf("Error: Unable to create socket\n");
+        return sock;
+    }
+
+    int flags = lwip_fcntl(sock, F_GETFL, 0);
+    lwip_fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+    int ret = lwip_connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    osDelay(10);
+    if (ret < 0 && errno != EINPROGRESS) {
+        printf("Error: Connection failed, errno = %d\n", errno);
+        lwip_close(sock);
+        return sock;
+    }
+
+    fd_set writefds;
+    FD_ZERO(&writefds);
+    FD_SET(sock, &writefds);
+
+    ret = lwip_select(sock + 1, NULL, &writefds, NULL, &timeout);
+    osDelay(10);
+    if (ret <= 0) {
+        printf("Error: select() timeout or failed, ret = %d, errno = %d\n", ret, errno);
+        lwip_close(sock);
+        return -1;
+    }
+
+    int so_error;
+    socklen_t len = sizeof(so_error);
+    lwip_getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &len);
+
+    if (so_error != 0) {
+        printf("Error: Connection error, so_error = %d\n", so_error);
+        lwip_close(sock);
+        return -1;
+    }
+
+    size_t length = strlen(message);
+    size_t padded_length = ((length + AES_BLOCKLEN - 1) / AES_BLOCKLEN) * AES_BLOCKLEN;
+    char *padded_message = malloc(padded_length);
+
+    if (!padded_message) {
+        printf("Error: Memory allocation failed\n");
+        lwip_close(sock);
+        return -1;
+    }
+
+    memset(padded_message, padded_length - length, padded_length);
+    strncpy(padded_message, message, length);
+
+    AES_Encrypt(padded_message, padded_length);
+
+    ret = lwip_send(sock, padded_message, padded_length, 0);
+    osDelay(10);
+    if (ret < 0) {
+        printf("Error: Failed to send data, errno = %d\n", errno);
+    } else {
+        printf("Data sent successfully!\n");
+    }
+
+    free(padded_message);
+    lwip_fcntl(sock, F_SETFL, flags);
+    lwip_close(sock);
+
+    return ret;
+}
+
+
+void SetLEDState(uint8_t state)
+{
+    HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, (state & 0x1) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, (state & 0x2) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, (state & 0x4) ? GPIO_PIN_RESET : GPIO_PIN_SET);
+}
+
+void SuccessLED() {
+	const uint8_t led_sequence[] = {0b000, 0b100, 0b110, 0b011, 0b001, 0b000};
+	const size_t sequence_length = sizeof(led_sequence) / sizeof(led_sequence[0]);
+
+	for (size_t i = 0; i < sequence_length; i++)
+	{
+		SetLEDState(led_sequence[i]);
+		osDelay(80);
+	}
+}
+
+void FailLED() {
+	const uint8_t led_sequence[] = {0b101, 0b011, 0b110, 0b111, 0b000};
+	const size_t sequence_length = sizeof(led_sequence) / sizeof(led_sequence[0]);
+
+	for (size_t i = 0; i < sequence_length; i++)
+	{
+		SetLEDState(led_sequence[i]);
+		osDelay(80);
+	}
+}
+
 void MX_LWIP_Proccess()
 {
-    int sock = -1;
-    struct sockaddr_in server_addr;
-
-    // Настройка адреса сервера
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = lwip_htons(SERVER_PORT); // Порт сервера
-    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP); // IP-адрес сервера
-
     while (1)
     {
-        // Проверка состояния линка
-        if (!netif_is_link_up(&gnetif))
+        if (!netif_is_up(&gnetif))
         {
-            if (sock >= 0)
-            {
-                lwip_close(sock); // Закрыть сокет при потере линка
-                sock = -1;
-            }
             osDelay(1000);
             continue;
         }
 
-        // Логирование IP-адреса
-        printf("IP Address: %s\n", ip4addr_ntoa(netif_ip4_addr(&gnetif)));
-
-        char* receivedMessage;
-        osStatus_t status = osMessageQueueGet(mainQueueHandle, &receivedMessage, NULL, osWaitForever);
+        char *message;
+        osStatus_t status = osMessageQueueGet(mainQueueHandle, &message, NULL, osWaitForever);
 
         if (status == osOK)
         {
-            printf("Message from queue: %s\n", receivedMessage);
+        	if (strcmp(message, "8883250") == 0) {
+        		SendDataOverSocket(SERVER_IP_TEST, SERVER_PORT_TEST, message);
+        	}
+            int ret = SendDataOverSocket(SERVER_IP, SERVER_PORT, message);
 
-            // Если сокет не создан, создаем и подключаемся
-            if (sock < 0)
-            {
-                // Создание сокета
-                sock = lwip_socket(AF_INET, SOCK_STREAM, 0);
-                if (sock < 0)
-                {
-                    printf("Socket creation failed\n");
-                    sock = -1;
-                }
-
-                // Подключение к серверу
-                int ret = lwip_connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
-                if (ret < 0)
-                {
-                    printf("Socket connection failed: ret = %i, errno = %d\n", ret, errno);
-                    lwip_close(sock);
-                    sock = -1;
-                }
-                else
-                {
-                    printf("Socket connected!\n");
-                }
-            }
-
-            // Отправка данных через сокет
-            int ret = lwip_send(sock, receivedMessage, strlen(receivedMessage), 0);
-            if (sock < 0 || ret < 0)
-            {
-                printf("Socket send failed :(sock = %i, ret = %i, errno = %i\n", sock, ret, errno);
-
-                // Возврат сообщения обратно в очередь
-                osMessageQueuePut(mainQueueHandle, &receivedMessage, 0, osWaitForever);
-
-                // Закрыть сокет
-                lwip_close(sock);
-                sock = -1;
-            }
-            else
-            {
-                printf("Socket sent successfully :) data = [%s]\n", receivedMessage);
-                free(receivedMessage); // Освободить память
-            }
-        }
-        else
-        {
-            printf("Queue message error: %i\n", status);
+            if (ret > 0) {
+				free(message);
+				SuccessLED();
+			} else {
+				osMessageQueuePut(mainQueueHandle, &message, 0, osWaitForever);
+				FailLED();
+			}
         }
 
-        osDelay(100); // Задержка перед следующей итерацией
-    }
-
-    // Закрытие соединения
-    if (sock > 0)
-    {
-        lwip_close(sock);
+        osDelay(1000);
     }
 }
-
 
 /* USER CODE END 2 */
 
@@ -241,14 +332,14 @@ void MX_LWIP_Init(void)
   attributes.stack_size = INTERFACE_THREAD_STACK_SIZE;
   attributes.priority = osPriorityBelowNormal;
   osThreadNew(ethernet_link_thread, &gnetif, &attributes);
-  MonitorAllTasks();
 /* USER CODE END H7_OS_THREAD_NEW_CMSIS_RTOS_V2 */
 
   /* Start DHCP negotiation for a network interface (IPv4) */
   dhcp_start(&gnetif);
 
 /* USER CODE BEGIN 3 */
-  printf("DHCP finished\n");
+  while(gnetif.ip_addr.addr == 0);
+  printf("IP Address: %s\n", ip4addr_ntoa(netif_ip4_addr(&gnetif)));
 /* USER CODE END 3 */
 }
 
@@ -269,15 +360,13 @@ static void ethernet_link_status_updated(struct netif *netif)
   if (netif_is_up(netif))
   {
 /* USER CODE BEGIN 5 */
-	  printf("Link is UP. IP Address: %s\n", ip4addr_ntoa(netif_ip4_addr(&gnetif)));
-	  IsLinkUp = 1;
+	//printf("Link is UP. IP Address: %s\n", ip4addr_ntoa(netif_ip4_addr(&gnetif)));
 /* USER CODE END 5 */
   }
   else /* netif is down */
   {
 /* USER CODE BEGIN 6 */
-	  printf("Link is DOWN.\n");
-	  IsLinkUp = 0;
+	  //printf("Link is DOWN.\n");
 /* USER CODE END 6 */
   }
 }
