@@ -22,16 +22,14 @@
 #include "stm32f4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "stdlib.h"
-#include "stdio.h"
-#include "cmsis_os.h"
 #include "string.h"
 #include "Wiegand.h"
+#include "Queue.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN TD */
-extern osMessageQueueId_t mainQueueHandle;
+
 /* USER CODE END TD */
 
 /* Private define ------------------------------------------------------------*/
@@ -47,11 +45,10 @@ extern osMessageQueueId_t mainQueueHandle;
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
 
-extern uint8_t rx_buffer_length;
-extern uint8_t rx_buffer[DMA_RX_BUFFER_SIZE]; // Буфер для приема
-extern uint8_t rx_buffer_dma[DMA_RX_BUFFER_SIZE]; // Буфер для DMA
+extern uint8_t rx_buffer_dma[DMA_RX_BUFFER_SIZE];
 
-extern struct WIEGAND wg;
+extern WIEGAND wg;
+extern Queue queue;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -65,7 +62,6 @@ extern struct WIEGAND wg;
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-extern ETH_HandleTypeDef heth;
 extern DMA_HandleTypeDef hdma_usart2_rx;
 extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim1;
@@ -153,6 +149,19 @@ void UsageFault_Handler(void)
 }
 
 /**
+  * @brief This function handles System service call via SWI instruction.
+  */
+void SVC_Handler(void)
+{
+  /* USER CODE BEGIN SVCall_IRQn 0 */
+
+  /* USER CODE END SVCall_IRQn 0 */
+  /* USER CODE BEGIN SVCall_IRQn 1 */
+
+  /* USER CODE END SVCall_IRQn 1 */
+}
+
+/**
   * @brief This function handles Debug monitor.
   */
 void DebugMon_Handler(void)
@@ -163,6 +172,33 @@ void DebugMon_Handler(void)
   /* USER CODE BEGIN DebugMonitor_IRQn 1 */
 
   /* USER CODE END DebugMonitor_IRQn 1 */
+}
+
+/**
+  * @brief This function handles Pendable request for system service.
+  */
+void PendSV_Handler(void)
+{
+  /* USER CODE BEGIN PendSV_IRQn 0 */
+
+  /* USER CODE END PendSV_IRQn 0 */
+  /* USER CODE BEGIN PendSV_IRQn 1 */
+
+  /* USER CODE END PendSV_IRQn 1 */
+}
+
+/**
+  * @brief This function handles System tick timer.
+  */
+void SysTick_Handler(void)
+{
+  /* USER CODE BEGIN SysTick_IRQn 0 */
+
+  /* USER CODE END SysTick_IRQn 0 */
+
+  /* USER CODE BEGIN SysTick_IRQn 1 */
+
+  /* USER CODE END SysTick_IRQn 1 */
 }
 
 /******************************************************************************/
@@ -192,9 +228,7 @@ void DMA1_Stream5_IRQHandler(void)
 void EXTI9_5_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI9_5_IRQn 0 */
-	Wiegand_ReadD0(&wg);
-	HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+  Wiegand_ReadD0(&wg);
   /* USER CODE END EXTI9_5_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(WG0_Pin);
   /* USER CODE BEGIN EXTI9_5_IRQn 1 */
@@ -225,21 +259,42 @@ void USART2_IRQHandler(void)
     if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE)) {
         __HAL_UART_CLEAR_IDLEFLAG(&huart2);
 
-        // Остановите DMA
         HAL_UART_DMAStop(&huart2);
 
-        // Вычислите количество полученных данных
         uint16_t data_length = DMA_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(huart2.hdmarx);
 
-        // Выделите память для данных
-		memset(rx_buffer, 0, DMA_RX_BUFFER_SIZE);  // �?нициализация памяти
+        if (data_length > 0) {
+            // Faqat raqamlardan iborat qismni ajratib olish (\r, \n, bo'sh joy o'tkaziladi)
+            uint16_t start = 0;
+            uint16_t end = data_length;
 
-		// Копируем данные из DMA буфера в обработанный буфер
-		memcpy(rx_buffer, rx_buffer_dma, data_length);
+            // Boshidan va oxiridan whitespace/control belgilarni olib tashlash
+            while (start < end && rx_buffer_dma[start] <= ' ')
+                start++;
+            while (end > start && rx_buffer_dma[end - 1] <= ' ')
+                end--;
 
-        // Перезапустите DMA
+            // Hammasi digit ekanligini tekshirish
+            uint8_t all_digits = (end > start) ? 1 : 0;
+            for (uint16_t i = start; i < end; i++) {
+                if (rx_buffer_dma[i] < '0' || rx_buffer_dma[i] > '9') {
+                    all_digits = 0;
+                    break;
+                }
+            }
+
+            if (all_digits) {
+                uint64_t val = 0;
+                for (uint16_t i = start; i < end; i++) {
+                    val = val * 10 + (rx_buffer_dma[i] - '0');
+                }
+                if (val > 0) {
+                    //Queue_Enqueue(&queue, RS485_TYPE, val); //TODO: hozircha RS485_TYPE qo'shilmadi, keyinchalik qo'shish kerak
+                }
+            }
+        }
+
         HAL_UART_Receive_DMA(&huart2, rx_buffer_dma, DMA_RX_BUFFER_SIZE);
-        rx_buffer_length = data_length;
     }
 
   /* USER CODE END USART2_IRQn 0 */
@@ -255,28 +310,12 @@ void USART2_IRQHandler(void)
 void EXTI15_10_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI15_10_IRQn 0 */
-	Wiegand_ReadD1(&wg);
-	HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+  Wiegand_ReadD1(&wg);
   /* USER CODE END EXTI15_10_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(WG1_Pin);
   /* USER CODE BEGIN EXTI15_10_IRQn 1 */
 
   /* USER CODE END EXTI15_10_IRQn 1 */
-}
-
-/**
-  * @brief This function handles Ethernet global interrupt.
-  */
-void ETH_IRQHandler(void)
-{
-  /* USER CODE BEGIN ETH_IRQn 0 */
-
-  /* USER CODE END ETH_IRQn 0 */
-  HAL_ETH_IRQHandler(&heth);
-  /* USER CODE BEGIN ETH_IRQn 1 */
-
-  /* USER CODE END ETH_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

@@ -18,14 +18,15 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "cmsis_os.h"
 #include "lwip.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
+#include "Queue.h"
 #include "string.h"
 #include "Wiegand.h"
+#include "log.h"
 
 /* USER CODE END Includes */
 
@@ -49,31 +50,11 @@
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* Definitions for emulatorTask */
-osThreadId_t emulatorTaskHandle;
-const osThreadAttr_t emulatorTask_attributes = {
-  .name = "emulatorTask",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for mainQueue */
-osMessageQueueId_t mainQueueHandle;
-const osMessageQueueAttr_t mainQueue_attributes = {
-  .name = "mainQueue"
-};
 /* USER CODE BEGIN PV */
-uint8_t rx_buffer_length;
-uint8_t rx_buffer[DMA_RX_BUFFER_SIZE]; // Буфер для приема
-uint8_t rx_buffer_dma[DMA_RX_BUFFER_SIZE]; // Буфер для DMA
+uint8_t rx_buffer_dma[DMA_RX_BUFFER_SIZE];
 
 WIEGAND wg;
+__attribute__((section(".ccmram"))) Queue queue;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -82,13 +63,18 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
-void StartDefaultTask(void *argument);
-void StartTask02(void *argument);
-
 /* USER CODE BEGIN PFP */
-//void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
-//void HAL_UART_IDLECallback(UART_HandleTypeDef *huart);
-extern void initialise_monitor_handles(void);
+int _write(int file, char *ptr, int len) {
+    (void)file;
+    for (int i = 0; i < len; i++) {
+        if (ptr[i] == '\n') {
+            uint8_t cr = '\r';
+            HAL_UART_Transmit(&huart1, &cr, 1, HAL_MAX_DELAY);
+        }
+        HAL_UART_Transmit(&huart1, (uint8_t *)&ptr[i], 1, HAL_MAX_DELAY);
+    }
+    return len;
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -103,8 +89,6 @@ extern void initialise_monitor_handles(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
-	initialise_monitor_handles();
 
   /* USER CODE END 1 */
 
@@ -121,70 +105,43 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  Queue_Init(&queue);
+  Wiegand_Init(&wg);
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_USART2_UART_Init();
   MX_USART1_UART_Init();
+
+  HAL_Delay(100);
+  printf("\n==============================\n");
+  printf("  QR50BE Gateway v1.0\n");
+  printf("  Queue: %u element\n", (unsigned)QUEUE_MAX_ITEMS);
+  printf("==============================\n");
+  LOG_INFO("SYS", "Tizim ishga tushdi");
+  LOG_INFO("SYS", "PHY kutilmoqda (2s)...");
+
+  HAL_Delay(2000);
+  MX_USART2_UART_Init();
+  LOG_OK("SYS", "RS485 tayyor");
+
+  LOG_INFO("SYS", "Ethernet init...");
+  MX_LWIP_Init();
+  LOG_OK("SYS", "Barcha periferiyalar tayyor");
   /* USER CODE BEGIN 2 */
 
-  //HAL_UART_Receive_DMA(&huart2, rx_buffer, sizeof(rx_buffer)); // Запуск DMA приема
   /* USER CODE END 2 */
 
-  /* Init scheduler */
-  osKernelInitialize();
-
-  /* USER CODE BEGIN RTOS_MUTEX */
-  /* add mutexes, ... */
-  /* USER CODE END RTOS_MUTEX */
-
-  /* USER CODE BEGIN RTOS_SEMAPHORES */
-  /* add semaphores, ... */
-  /* USER CODE END RTOS_SEMAPHORES */
-
-  /* USER CODE BEGIN RTOS_TIMERS */
-  /* start timers, add new ones, ... */
-  /* USER CODE END RTOS_TIMERS */
-
-  /* Create the queue(s) */
-  /* creation of mainQueue */
-  mainQueueHandle = osMessageQueueNew (4096, sizeof(uint32_t), &mainQueue_attributes);
-
-  /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
-  /* USER CODE END RTOS_QUEUES */
-
-  /* Create the thread(s) */
-  /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-
-  /* creation of emulatorTask */
-  emulatorTaskHandle = osThreadNew(StartTask02, NULL, &emulatorTask_attributes);
-
-  /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
-  //printf("Begin rtos threads ...\n");
-  /* USER CODE END RTOS_THREADS */
-
-  /* USER CODE BEGIN RTOS_EVENTS */
-  /* add events, ... */
-  /* USER CODE END RTOS_EVENTS */
-
-  /* Start scheduler */
-  osKernelStart();
-
-  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
+	  MX_LWIP_Process();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  Proccess();
   }
   /* USER CODE END 3 */
 }
@@ -250,7 +207,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 9600;
+  huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -274,7 +231,6 @@ static void MX_USART1_UART_Init(void)
   */
 static void MX_USART2_UART_Init(void)
 {
-
   /* USER CODE BEGIN USART2_Init 0 */
 
   /* USER CODE END USART2_Init 0 */
@@ -298,7 +254,6 @@ static void MX_USART2_UART_Init(void)
   HAL_UART_Receive_DMA(&huart2, rx_buffer_dma, DMA_RX_BUFFER_SIZE);
   __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
   /* USER CODE END USART2_Init 2 */
-
 }
 
 /**
@@ -306,15 +261,13 @@ static void MX_USART2_UART_Init(void)
   */
 static void MX_DMA_Init(void)
 {
-
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
-
 }
 
 /**
@@ -373,98 +326,16 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(DERE_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
-
 }
 
 /* USER CODE BEGIN 4 */
-void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
-{
-    // Можно перезагрузить систему или выполнить иные действия
-    while (1); // Остановка системы
-}
 
 /* USER CODE END 4 */
-
-/* USER CODE BEGIN Header_StartDefaultTask */
-/**
-  * @brief  Function implementing the defaultTask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
-{
-  /* init code for LWIP */
-  MX_LWIP_Init();
-  /* USER CODE BEGIN 5 */
-
-  /* Infinite loop */
-  for(;;)
-  {
-	  MX_LWIP_Proccess();
-	  osDelay(3000);
-  }
-  /* USER CODE END 5 */
-}
-
-/* USER CODE BEGIN Header_StartTask02 */
-/**
-* @brief Function implementing the emulatorTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartTask02 */
-void StartTask02(void *argument)
-{
-  /* USER CODE BEGIN StartTask02 */
-  /* Infinite loop */
-	Wiegand_Init(&wg);
-
-	for(;;)
-	{
-		if (rx_buffer_length > 0)
-		{
-			char* data = (char*)malloc(rx_buffer_length + 1);
-			memset(data, 0, rx_buffer_length + 1);
-			memcpy(data, rx_buffer, rx_buffer_length);
-
-			printf("RS485: %s\n", data);
-
-			if (osMessageQueuePut(mainQueueHandle, &data, 0, osWaitForever) == osOK)
-			{
-				rx_buffer_length = 0;
-			}
-		}
-
-		if (Wiegand_Available(&wg))
-		{
-			uint32_t wcode = Wiegand_GetCode(&wg);
-			int wtype = Wiegand_GetWiegandType(&wg);
-
-			if (wcode > 0)
-			{
-				char* data = (char*)malloc(11);
-				memset(data, 0, 11);
-				sprintf(data, "%u", wcode);
-
-				printf("Wiegand: %s\n", data);
-
-				if (osMessageQueuePut(mainQueueHandle, &data, 0, osWaitForever) == osOK)
-				{
-
-				}
-			}
-		}
-
-		osDelay(30);
-	}
-  /* USER CODE END StartTask02 */
-}
 
 /**
   * @brief  Period elapsed callback in non blocking mode
@@ -494,12 +365,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
   while (1)
   {
 	  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-	  HAL_Delay(100);
+	  HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
+	  for (volatile uint32_t i = 0; i < 500000; i++);
   }
   /* USER CODE END Error_Handler_Debug */
 }
@@ -516,7 +386,7 @@ void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+     ex: printf("Wrong parameters value: file %s on line %d\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

@@ -2,7 +2,7 @@
  * Wiegand.h
  *
  *  Created on: Jan 28, 2025
- *      Author: Admin
+ *      Author: Xurshid Xujamatov
  */
 
 #ifndef WIEGAND_H_
@@ -12,11 +12,7 @@
 #include "stdbool.h"
 
 // WIEGAND structure definition
-typedef struct {
-//    GPIO_TypeDef* portD0;
-//    uint16_t pinD0;
-//    GPIO_TypeDef* portD1;
-//    uint16_t pinD1;
+typedef struct WIEGAND {
 	volatile uint32_t cardTempHighHigh;
     volatile uint32_t cardTempHigh;
     volatile uint32_t cardTemp;
@@ -24,15 +20,14 @@ typedef struct {
     volatile int bitCount;
     int wiegandType;
     uint64_t code;
-    uint8_t busy;
 } WIEGAND;
 
 // Function prototypes
-void Wiegand_Init(WIEGAND* wg/*, GPIO_TypeDef* portD0, uint16_t pinD0, GPIO_TypeDef* portD1, uint16_t pinD1*/);
+void Wiegand_Init(WIEGAND* wg);
 void Wiegand_ReadD0(WIEGAND* wg);
 void Wiegand_ReadD1(WIEGAND* wg);
 bool Wiegand_Available(WIEGAND* wg);
-uint32_t Wiegand_GetCode(WIEGAND* wg);
+uint64_t Wiegand_GetCode(WIEGAND* wg);
 int Wiegand_GetWiegandType(WIEGAND* wg);
 
 #endif /* WIEGAND_H_ */

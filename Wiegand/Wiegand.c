@@ -2,41 +2,33 @@
  * Wiegand.cpp
  *
  *  Created on: Jan 28, 2025
- *      Author: Admin
+ *      Author: Xurshid Xujamatov
  */
 
 #include "Wiegand.h"
 
 static bool Wiegand_DoConversion(WIEGAND* wg);
-static uint64_t Wiegand_GetCardId(volatile uint32_t* codeHighHigh, volatile uint32_t* codeHigh, volatile uint32_t* codeLow, uint8_t bitLength);
-
-uint8_t p = 0;
-uint8_t n = 0;
+static uint64_t Wiegand_GetCardId(uint32_t codeHighHigh, uint32_t codeHigh, uint32_t codeLow, uint8_t bitLength);
 
 // Initialize WIEGAND structure
-void Wiegand_Init(WIEGAND* wg/*, GPIO_TypeDef* portD0, uint16_t pinD0, GPIO_TypeDef* portD1, uint16_t pinD1*/) {
-//    wg->portD0 = portD0;
-//    wg->pinD0 = pinD0;
-//    wg->portD1 = portD1;
-//    wg->pinD1 = pinD1;
+void Wiegand_Init(WIEGAND* wg) {
+    wg->cardTempHighHigh = 0;
     wg->cardTempHigh = 0;
     wg->cardTemp = 0;
     wg->lastWiegand = 0;
     wg->bitCount = 0;
     wg->wiegandType = 0;
     wg->code = 0;
-    wg->busy = 0;
 }
 
 // Simulate D0 signal read
 void Wiegand_ReadD0(WIEGAND* wg) {
-	wg->busy = 1;
     wg->bitCount++;
 
     if (wg->bitCount > 64)
     {
     	wg->cardTempHighHigh <<= 1;
-    	wg->cardTempHighHigh |= ((wg->cardTempHigh & 0x8000000000000000) >> 63);
+    	wg->cardTempHighHigh |= ((wg->cardTempHigh & 0x80000000) >> 31);
     }
 
 	if (wg->bitCount > 31)
@@ -46,22 +38,18 @@ void Wiegand_ReadD0(WIEGAND* wg) {
 	}
 
 	wg->cardTemp <<= 1;
-	wg->cardTemp &= 0xFFFFFFFE;
 
     wg->lastWiegand = HAL_GetTick();
-    wg->busy = 0;
-    n ++;
 }
 
 // Simulate D1 signal read
 void Wiegand_ReadD1(WIEGAND* wg) {
-	wg->busy = 1;
     wg->bitCount++;
 
     if (wg->bitCount > 64)
     {
     	wg->cardTempHighHigh <<= 1;
-    	wg->cardTempHighHigh |= ((wg->cardTempHigh & 0x8000000000000000) >> 63);
+    	wg->cardTempHighHigh |= ((wg->cardTempHigh & 0x80000000) >> 31);
     }
 
 	if (wg->bitCount > 31)
@@ -74,21 +62,15 @@ void Wiegand_ReadD1(WIEGAND* wg) {
 	wg->cardTemp |= 1;
 
     wg->lastWiegand = HAL_GetTick();
-    wg->busy = 0;
-    p ++;
 }
 
 // Check if a Wiegand code is available
 bool Wiegand_Available(WIEGAND* wg) {
-	if (wg->busy == 0)
-	{
-		return Wiegand_DoConversion(wg);
-	}
-	return false;
+    return Wiegand_DoConversion(wg);
 }
 
 // Get the received Wiegand code
-uint32_t Wiegand_GetCode(WIEGAND* wg) {
+uint64_t Wiegand_GetCode(WIEGAND* wg) {
     return wg->code;
 }
 
@@ -101,49 +83,53 @@ int Wiegand_GetWiegandType(WIEGAND* wg) {
 static bool Wiegand_DoConversion(WIEGAND* wg) {
     uint32_t sysTick = HAL_GetTick();
     if ((sysTick - wg->lastWiegand) > 25) {
-        if ((wg->bitCount == 24) || (wg->bitCount == 26) || (wg->bitCount == 32) || (wg->bitCount == 34) || (wg->bitCount == 66)) {
-            wg->code = Wiegand_GetCardId(&wg->cardTempHighHigh, &wg->cardTempHigh, &wg->cardTemp, wg->bitCount);
-            wg->wiegandType = wg->bitCount;
+        // Atomik o'qish — interrupt bilan race condition oldini olish
+        __disable_irq();
+        int bc = wg->bitCount;
+        uint32_t tHH = wg->cardTempHighHigh;
+        uint32_t tH  = wg->cardTempHigh;
+        uint32_t tL  = wg->cardTemp;
+        wg->bitCount = 0;
+        wg->cardTemp = 0;
+        wg->cardTempHigh = 0;
+        wg->cardTempHighHigh = 0;
+        __enable_irq();
 
-            // Reset bit count and temp storage
-            wg->bitCount = 0;
-            wg->cardTemp = 0;
-            wg->cardTempHigh = 0;
-            wg->cardTempHighHigh = 0;
+        if ((bc == 24) || (bc == 26) || (bc == 32) || (bc == 34) || (bc == 66)) {
+            wg->code = Wiegand_GetCardId(tHH, tH, tL, bc);
+            wg->wiegandType = bc;
             return true;
         } else {
-            // Reset the state if no valid bit count is detected
             wg->lastWiegand = sysTick;
-            wg->bitCount = 0;
-            wg->cardTemp = 0;
-            wg->cardTempHigh = 0;
-            wg->cardTempHighHigh = 0;
         }
     }
     return false;
 }
 
 // Extract the card ID from the Wiegand data
-static uint64_t Wiegand_GetCardId(volatile uint32_t* codeHighHigh, volatile uint32_t* codeHigh, volatile uint32_t* codeLow, uint8_t bitLength) {
+static uint64_t Wiegand_GetCardId(uint32_t codeHighHigh, uint32_t codeHigh, uint32_t codeLow, uint8_t bitLength) {
     if (bitLength == 26)
     {
-        return ((*codeLow >> 1) & 0xFFFFF);
+        // 1 parity + 8 facility + 16 card + 1 parity = 26 bit
+        return ((codeLow >> 1) & 0xFFFFFF);
     }
     else if (bitLength == 34)
     {
-        *codeHigh = *codeHigh & 0x03;
-        *codeHigh <<= 31;
-        *codeLow >>= 1;
-        return *codeHigh | *codeLow;
+        // 1 parity + 32 data + 1 parity — parity bitlarni olib tashlash
+        uint64_t result = ((uint64_t)(codeHigh & 0x01) << 32) | codeLow;
+        result >>= 1;          // oxirgi parity olib tashlash
+        result &= 0xFFFFFFFF;  // 32-bit data
+        return result;
     }
     else if (bitLength == 66)
     {
-    	*codeLow = ((*codeHigh & 0x01) << 31) | (*codeLow >> 1);
-    	*codeHigh = (*codeHigh >> 1) | ((*codeHighHigh & 0x01) << 31);
-
-		return (uint64_t)(*codeHigh) | (uint64_t)(*codeLow);
+        // 1 parity + 64 data + 1 parity — parity bitlarni olib tashlash
+        (void)codeHighHigh;
+        uint64_t result = ((uint64_t)codeHigh << 32) | (uint64_t)codeLow;
+        result >>= 1;  // oxirgi parity olib tashlash
+        return result;
     }
-    return (uint64_t)*codeLow;
+    return (uint64_t)codeLow;
 }
 
 
