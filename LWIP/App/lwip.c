@@ -172,10 +172,15 @@ static err_t SendDataRawTCP(const char *server_ip, uint16_t server_port,
 
     LOG_INFO("TCP", "Yuborish: %lu -> %s:%u", (unsigned long)value, server_ip, server_port);
 
-    // AES shifrlash (8 bayt -> 16 bayt PKCS7)
+    // ID ni ASCII stringga aylantirish
+    char str[21];
+    int len = snprintf(str, sizeof(str), "%lu", (unsigned long)value);
+
+    // PKCS7 padding bilan AES blokga joylashtirish
     uint8_t padded_message[AES_BLOCKLEN];
-    memcpy(padded_message, &value, sizeof(value));
-    memset(padded_message + sizeof(value), AES_BLOCKLEN - sizeof(value), AES_BLOCKLEN - sizeof(value));
+    memcpy(padded_message, str, len);
+    uint8_t pad = AES_BLOCKLEN - len;
+    memset(padded_message + len, pad, pad);
     AES_EncryptBuffer(padded_message, AES_BLOCKLEN);
 
     // Socket yaratish
