@@ -646,12 +646,6 @@ void ethernet_link_check_state(struct netif *netif)
 
   PHYLinkState = DP83848_GetLinkState(&DP83848);
 
-  static int32_t lastState = -1;
-  if (PHYLinkState != lastState) {
-    printf("[%08lu][INFO][PHY] Link state: %ld\n", HAL_GetTick(), (long)PHYLinkState);
-    lastState = PHYLinkState;
-  }
-
   if(netif_is_link_up(netif) && (PHYLinkState <= DP83848_STATUS_LINK_DOWN))
   {
     HAL_ETH_Stop(&heth);

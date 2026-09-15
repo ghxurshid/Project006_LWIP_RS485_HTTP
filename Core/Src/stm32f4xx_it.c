@@ -289,7 +289,7 @@ void USART2_IRQHandler(void)
                     val = val * 10 + (rx_buffer_dma[i] - '0');
                 }
                 if (val > 0) {
-                    //Queue_Enqueue(&queue, RS485_TYPE, val); //TODO: hozircha RS485_TYPE qo'shilmadi, keyinchalik qo'shish kerak
+                    Queue_Enqueue(&queue, RS485_TYPE, val); //TODO: hozircha RS485_TYPE qo'shilmadi, keyinchalik qo'shish kerak
                 }
             }
         }

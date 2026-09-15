@@ -68,7 +68,7 @@
 /*----- Default Value for PBUF_POOL_BUFSIZE: 592 ---*/
 #define PBUF_POOL_BUFSIZE 1024
 /*----- Default Value for ARP_TABLE_SIZE: 10 ---*/
-#define ARP_TABLE_SIZE 10
+#define ARP_TABLE_SIZE 127
 /*----- Value in opt.h for LWIP_ETHERNET: LWIP_ARP || PPPOE_SUPPORT -*/
 #define LWIP_ETHERNET 1
 /*----- Value in opt.h for LWIP_DNS_SECURE: (LWIP_DNS_SECURE_RAND_XID | LWIP_DNS_SECURE_NO_MULTIPLE_OUTSTANDING | LWIP_DNS_SECURE_RAND_SRC_PORT) -*/
@@ -105,8 +105,14 @@
 #define CHECKSUM_CHECK_TCP 0
 /*----- Value in opt.h for CHECKSUM_CHECK_ICMP6: 1 -----*/
 #define CHECKSUM_CHECK_ICMP6 0
-/*----- Debug off for production ---*/
+/*----- Default Value for LWIP_DBG_TYPES_ON: LWIP_DBG_ON ---*/
 #define LWIP_DBG_TYPES_ON LWIP_DBG_OFF
+/*----- Default Value for SOCKETS_DEBUG: LWIP_DBG_OFF ---*/
+#define SOCKETS_DEBUG LWIP_DBG_ON
+/*----- Default Value for TCP_DEBUG: LWIP_DBG_OFF ---*/
+#define TCP_DEBUG LWIP_DBG_ON
+/*----- Default Value for DHCP_DEBUG: LWIP_DBG_OFF ---*/
+#define DHCP_DEBUG LWIP_DBG_ON
 /*-----------------------------------------------------------------------------*/
 /* USER CODE BEGIN 1 */
 

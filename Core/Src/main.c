@@ -111,24 +111,10 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_USART1_UART_Init();
-
-  HAL_Delay(100);
-  printf("\n==============================\n");
-  printf("  QR50BE Gateway v1.0\n");
-  printf("  Queue: %u element\n", (unsigned)QUEUE_MAX_ITEMS);
-  printf("==============================\n");
-  LOG_INFO("SYS", "Tizim ishga tushdi");
-  LOG_INFO("SYS", "PHY kutilmoqda (2s)...");
-
-  HAL_Delay(2000);
-  MX_USART2_UART_Init();
-  LOG_OK("SYS", "RS485 tayyor");
-
-  LOG_INFO("SYS", "Ethernet init...");
   MX_LWIP_Init();
-  LOG_OK("SYS", "Barcha periferiyalar tayyor");
+  MX_DMA_Init();
+  MX_USART2_UART_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -231,6 +217,7 @@ static void MX_USART1_UART_Init(void)
   */
 static void MX_USART2_UART_Init(void)
 {
+
   /* USER CODE BEGIN USART2_Init 0 */
 
   /* USER CODE END USART2_Init 0 */
@@ -254,6 +241,7 @@ static void MX_USART2_UART_Init(void)
   HAL_UART_Receive_DMA(&huart2, rx_buffer_dma, DMA_RX_BUFFER_SIZE);
   __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
   /* USER CODE END USART2_Init 2 */
+
 }
 
 /**
@@ -261,6 +249,7 @@ static void MX_USART2_UART_Init(void)
   */
 static void MX_DMA_Init(void)
 {
+
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
 
@@ -268,6 +257,7 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+
 }
 
 /**
@@ -331,6 +321,7 @@ static void MX_GPIO_Init(void)
 
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
