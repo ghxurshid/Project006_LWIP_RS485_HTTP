@@ -17,6 +17,7 @@
 typedef uint8_t DataType;
 #define RS485_TYPE   0
 #define WIEGAND_TYPE 1
+#define HID_TYPE     2  /* USB HID QR skaner */
 
 typedef struct __attribute__((packed)) {
     uint64_t value;

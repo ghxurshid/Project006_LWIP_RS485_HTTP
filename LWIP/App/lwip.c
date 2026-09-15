@@ -28,6 +28,8 @@
 
 #include "Queue.h"
 #include "Wiegand.h"
+#include "hid_reader.h"
+#include "usb_host.h"
 
 #include "log.h"
 
@@ -153,6 +155,16 @@ static void tcp_error_cb(void *arg, err_t err)
 
 // ============== TCP Send ==============
 
+// Server javobini kutish paytidagi fon ishlari. Server o'chiq bo'lsa har urinish
+// 5s gacha bloklaydi - USB host shu vaqtda aylantirilmasa QR skaner
+// enumeratsiyasi va skanerlash server javobini kutib qotib qolardi.
+static void TcpWait_Poll(void)
+{
+    MX_LWIP_Process();
+    MX_USB_HOST_Process();
+    HidReader_Process();
+}
+
 // PCB ni xavfsiz yopish — error_cb da free bo'lgan bo'lsa tegmaymiz
 static void tcp_safe_close(struct tcp_pcb *pcb)
 {
@@ -211,7 +223,7 @@ static err_t SendDataRawTCP(const char *server_ip, uint16_t server_port,
     uint32_t start = sys_now();
     while (tcp_state == TCP_SEND_CONNECTING)
     {
-        MX_LWIP_Process();
+        TcpWait_Poll();
         if (sys_now() - start > TCP_CONNECT_TIMEOUT_MS)
         {
             LOG_XATO("TCP", "Ulanish timeout: %ums", TCP_CONNECT_TIMEOUT_MS);
@@ -246,7 +258,7 @@ static err_t SendDataRawTCP(const char *server_ip, uint16_t server_port,
     start = sys_now();
     while (tcp_state == TCP_SEND_SENT)
     {
-        MX_LWIP_Process();
+        TcpWait_Poll();
         if (sys_now() - start > TCP_CONNECT_TIMEOUT_MS)
         {
             LOG_XATO("TCP", "ACK kutish timeout: %ums", TCP_CONNECT_TIMEOUT_MS);
@@ -301,6 +313,17 @@ static void FailLED(void)
 
 // ============== Main Process ==============
 
+static const char *DataTypeName(DataType type)
+{
+    switch (type)
+    {
+    case WIEGAND_TYPE: return "WG";
+    case RS485_TYPE:   return "RS485";
+    case HID_TYPE:     return "HID";
+    default:           return "?";
+    }
+}
+
 void Proccess(void)
 {
     // 1. Wiegand — RFID kartadan ma'lumot o'qish
@@ -320,7 +343,7 @@ void Proccess(void)
     QueueItem item;
     if (gnetif.ip_addr.addr != 0 && Queue_Peek(&queue, &item))
     {
-        const char *src = (item.dataType == WIEGAND_TYPE) ? "WG" : "RS485";
+        const char *src = DataTypeName(item.dataType);
 
         if (SendDataRawTCP(SERVER_IP, SERVER_PORT, item.value) == ERR_OK)
         {

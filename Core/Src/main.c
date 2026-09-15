@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "lwip.h"
+#include "usb_host.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -27,6 +28,7 @@
 #include "string.h"
 #include "Wiegand.h"
 #include "log.h"
+#include "hid_reader.h"
 
 /* USER CODE END Includes */
 
@@ -61,8 +63,10 @@ __attribute__((section(".ccmram"))) Queue queue;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
-static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_USART2_UART_Init(void);
+void MX_USB_HOST_Process(void);
+
 /* USER CODE BEGIN PFP */
 /* _write() retarget log.c da - bloklamaydigan DMA halqa buferi orqali */
 /* USER CODE END PFP */
@@ -110,23 +114,20 @@ int main(void)
 
   /* Configure the system clock */
   SystemClock_Config();
-  Boot_Mark(2);
 
   /* USER CODE BEGIN SysInit */
   Queue_Init(&queue);
   Wiegand_Init(&wg);
+  HidReader_Init(&queue);
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  Boot_Mark(3);
   MX_DMA_Init();
   MX_USART1_UART_Init();
-  Boot_Mark(4);
   MX_USART2_UART_Init();
-  Boot_Mark(5);
   MX_LWIP_Init();
-  Boot_Mark(6);
+  MX_USB_HOST_Init();
   /* USER CODE BEGIN 2 */
   printf("\n==============================\n");
   printf("  QR50BE Gateway v1.0\n");
@@ -144,8 +145,10 @@ int main(void)
   {
 	  MX_LWIP_Process();
     /* USER CODE END WHILE */
+    MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
+	  HidReader_Process();
 	  Proccess();
 
 	  /* Heartbeat: main loop aylanayotganini ko'rsatadi. Uzluksiz miltillasa

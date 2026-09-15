@@ -1,16 +1,21 @@
 /*
- * Queue.c - Static Ring Buffer (interrupt-safe, lock-free)
+ * Queue.c - Static Ring Buffer (interrupt-safe)
  *
- * Single-producer / single-consumer model:
- *   - Interrupt (producer) faqat head ni yozadi
- *   - Main loop (consumer) faqat tail ni yozadi
- *   - Shu sababli mutex/disable_irq kerak emas
+ * Multi-producer / single-consumer model:
+ *   - Producerlar faqat head ni yozadi: RS485 (USART2 ISR), Wiegand va
+ *     USB HID (main loop)
+ *   - Consumer (main loop, Proccess) faqat tail ni yozadi
+ *   - Enqueue qisqa critical section ichida: aks holda main loop dagi
+ *     enqueue o'rtasida ISR enqueue qilsa ikkalasi bitta katakka yozib,
+ *     bittasi jimgina yo'qolardi
+ *   - Dequeue/Peek ga lock kerak emas: tail ni faqat consumer yozadi
  *
  *  Created on: Mar 7, 2025
  *      Author: Xurshid Xujamatov
  */
 
 #include "Queue.h"
+#include "stm32f4xx.h"  /* __get_PRIMASK / __disable_irq */
 
 void Queue_Init(Queue* q)
 {
@@ -36,15 +41,22 @@ uint16_t Queue_Count(Queue* q)
 
 bool Queue_Enqueue(Queue* q, DataType type, uint64_t value)
 {
-    if (Queue_IsFull(q))
-        return false;
+    /* PRIMASK saqlanadi: ISR ichidan chaqirilganda ham uzilishlarni noto'g'ri yoqib yubormaydi */
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
-    QueueItem* item = &q->items[q->head];
-    item->dataType = type;
-    item->value    = value;
+    bool ok = !Queue_IsFull(q);
+    if (ok)
+    {
+        QueueItem* item = &q->items[q->head];
+        item->dataType = type;
+        item->value    = value;
 
-    q->head = (q->head + 1) % QUEUE_MAX_ITEMS;
-    return true;
+        q->head = (q->head + 1) % QUEUE_MAX_ITEMS;
+    }
+
+    __set_PRIMASK(primask);
+    return ok;
 }
 
 bool Queue_Peek(Queue* q, QueueItem* out)
