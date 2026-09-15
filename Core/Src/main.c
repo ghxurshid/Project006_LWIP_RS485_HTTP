@@ -64,17 +64,7 @@ static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-int _write(int file, char *ptr, int len) {
-    (void)file;
-    for (int i = 0; i < len; i++) {
-        if (ptr[i] == '\n') {
-            uint8_t cr = '\r';
-            HAL_UART_Transmit(&huart1, &cr, 1, HAL_MAX_DELAY);
-        }
-        HAL_UART_Transmit(&huart1, (uint8_t *)&ptr[i], 1, HAL_MAX_DELAY);
-    }
-    return len;
-}
+/* _write() retarget log.c da - bloklamaydigan DMA halqa buferi orqali */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -116,7 +106,14 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  printf("\n==============================\n");
+  printf("  QR50BE Gateway v1.0\n");
+  printf("  Queue: %u element\n", (unsigned)QUEUE_MAX_ITEMS);
+  printf("  SYSCLK: %lu Hz | PCLK2: %lu Hz\n",
+         (unsigned long)HAL_RCC_GetSysClockFreq(),
+         (unsigned long)HAL_RCC_GetPCLK2Freq());
+  printf("==============================\n");
+  LOG_OK("SYS", "Barcha periferiyalar tayyor");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -205,7 +202,7 @@ static void MX_USART1_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART1_Init 2 */
-
+  Log_Init();
   /* USER CODE END USART1_Init 2 */
 
 }
@@ -356,6 +353,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
+  Log_Flush(200);
   while (1)
   {
 	  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);

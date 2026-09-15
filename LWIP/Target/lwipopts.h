@@ -107,12 +107,17 @@
 #define CHECKSUM_CHECK_ICMP6 0
 /*----- Default Value for LWIP_DBG_TYPES_ON: LWIP_DBG_ON ---*/
 #define LWIP_DBG_TYPES_ON LWIP_DBG_OFF
+/* lwIP ichki debug chiqishi. Bu bayroqlar faqat LWIP_DEBUG aniqlangan
+   bo'lsa ishlaydi - u loyiha define larida yo'q, shuning uchun ularni
+   LWIP_DBG_ON qilish hech narsani o'zgartirmaydi.
+   Yoqish uchun: loyiha C define lariga LWIP_DEBUG qo'shing va kerakligini
+   LWIP_DBG_ON ga o'zgartiring. DIQQAT: chiqish juda ko'p bo'ladi. */
 /*----- Default Value for SOCKETS_DEBUG: LWIP_DBG_OFF ---*/
-#define SOCKETS_DEBUG LWIP_DBG_ON
+#define SOCKETS_DEBUG LWIP_DBG_OFF
 /*----- Default Value for TCP_DEBUG: LWIP_DBG_OFF ---*/
-#define TCP_DEBUG LWIP_DBG_ON
+#define TCP_DEBUG LWIP_DBG_OFF
 /*----- Default Value for DHCP_DEBUG: LWIP_DBG_OFF ---*/
-#define DHCP_DEBUG LWIP_DBG_ON
+#define DHCP_DEBUG LWIP_DBG_OFF
 /*-----------------------------------------------------------------------------*/
 /* USER CODE BEGIN 1 */
 

@@ -387,12 +387,14 @@ void MX_LWIP_Init(void)
 /* USER CODE BEGIN 3 */
   netif_set_status_callback(&gnetif, netif_status_callback);
 
-  /* Link holatini tekshirish */
+  /* DHCP yuqorida, generatsiya qilingan kodda allaqachon boshlangan -
+     bu yerda qayta chaqirilsa ikkinchi DISCOVER ketadi. Faqat holatni
+     bildiramiz; kabel keyin ulansa ethernet_link_status_updated() ni
+     qayta boshlaydi. */
   if (netif_is_link_up(&gnetif))
   {
       LOG_OK("NET", "Ethernet allaqachon ulangan");
-      LOG_INFO("NET", "DHCP boshlanmoqda...");
-      dhcp_start(&gnetif);
+      LOG_INFO("NET", "DHCP boshlandi");
   }
   else
   {
