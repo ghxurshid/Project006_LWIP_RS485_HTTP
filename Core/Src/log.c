@@ -28,6 +28,7 @@
  */
 
 #include "log.h"
+#include "main.h"   /* LED*_Pin */
 #include <string.h>
 
 extern UART_HandleTypeDef huart1;
@@ -245,6 +246,121 @@ void Log_Flush(uint32_t timeout_ms)
 uint32_t Log_DroppedBytes(void)
 {
   return s_dropped;
+}
+
+/* Panik holatida HAL_Delay/HAL_GetTick ga ishonib bo'lmaydi: uzilishlar
+   o'chirilgan yoki klok umuman noto'g'ri bo'lishi mumkin */
+static void panic_delay(uint32_t loops)
+{
+  volatile uint32_t i;
+  for (i = 0; i < loops; i++)
+  {
+    __NOP();
+  }
+}
+
+/* DMA va uzilishlarsiz bitta bayt. Cheklangan kutish - TXE hech qachon
+   kelmasa ham osilib qolmaymiz. */
+static void panic_putc(char c)
+{
+  uint32_t guard = 400000u;
+
+  while (((USART1->SR & USART_SR_TXE) == 0u) && (guard > 0u))
+  {
+    guard--;
+  }
+  USART1->DR = (uint16_t)((uint8_t)c);
+}
+
+static void panic_puts(const char *s)
+{
+  while (*s != '\0')
+  {
+    panic_putc(*s++);
+  }
+}
+
+/* LED2 ni chiqish qilib sozlaydi (bir marta yetadi, lekin qayta chaqirish
+   ham zararsiz) */
+static void boot_led_init(void)
+{
+  GPIO_InitTypeDef gpio = {0};
+
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  gpio.Pin   = LED2_Pin;
+  gpio.Mode  = GPIO_MODE_OUTPUT_PP;
+  gpio.Pull  = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LED2_GPIO_Port, &gpio);
+}
+
+void Boot_Mark(uint8_t blinks)
+{
+  /* SystemCoreClock ga moslangan: klok HSI 16MHz bo'lsa ham, PLL 168MHz
+     bo'lsa ham miltillash bir xil tezlikda ko'rinadi */
+  const uint32_t on_off = SystemCoreClock / 60u;
+  uint8_t        n;
+
+  boot_led_init();
+
+  for (n = 0; n < blinks; n++)
+  {
+    HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+    panic_delay(on_off);
+    HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+    panic_delay(on_off);
+  }
+
+  panic_delay(on_off * 6u);           /* bosqichlar orasidagi pauza */
+}
+
+void Log_Panic(const char *msg, uint8_t blinks)
+{
+  GPIO_InitTypeDef gpio = {0};
+
+  __disable_irq();
+
+  /* USART1 kloki yoqilgan bo'lsagina chiqarishga urinamiz - aks holda
+     klok berilmagan periferiyaga murojaat qilgan bo'lardik */
+  if ((RCC->APB2ENR & RCC_APB2ENR_USART1EN) != 0u)
+  {
+    DMA2_Stream7->CR &= ~DMA_SxCR_EN;   /* yarim qolgan uzatmani to'xtatamiz */
+
+    while (s_tail != s_head)            /* buferdagi qoldiqni chiqaramiz */
+    {
+      panic_putc((char)s_buf[s_tail]);
+      s_tail = (uint16_t)((s_tail + 1u) & BUF_MASK);
+    }
+
+    if (msg != NULL)
+    {
+      panic_puts("\r\n[PANIC] ");
+      panic_puts(msg);
+      panic_puts("\r\n");
+    }
+  }
+
+  /* LED larni o'zimiz sozlaymiz - MX_GPIO_Init() ishlamagan bo'lishi mumkin */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  gpio.Pin   = LED1_Pin | LED2_Pin | LED3_Pin;
+  gpio.Mode  = GPIO_MODE_OUTPUT_PP;
+  gpio.Pull  = GPIO_NOPULL;
+  gpio.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &gpio);
+
+  for (;;)
+  {
+    uint8_t n;
+
+    for (n = 0; n < blinks; n++)
+    {
+      HAL_GPIO_WritePin(GPIOE, LED1_Pin | LED3_Pin, GPIO_PIN_RESET);
+      panic_delay(2000000u);
+      HAL_GPIO_WritePin(GPIOE, LED1_Pin | LED3_Pin, GPIO_PIN_SET);
+      panic_delay(2000000u);
+    }
+    panic_delay(12000000u);            /* naqshlar orasidagi uzun pauza */
+  }
 }
 
 void Log_Init(void)

@@ -79,7 +79,24 @@ static void MX_USART1_UART_Init(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
+  /*
+   * BOOT BOSQICHLARI - diagnostika.
+   *
+   * LED2 har bosqichda bir dona ko'p miltillaydi. Oxirgi ko'rgan sanog'ingiz
+   * kod qayergacha yetganini bildiradi:
+   *
+   *   1 - main() ga kirildi (startup sog'lom)
+   *   2 - SystemClock_Config() o'tdi (HSE/PLL 168MHz ishga tushdi)
+   *   3 - MX_GPIO_Init() o'tdi
+   *   4 - MX_USART1_UART_Init() o'tdi  <-- shu yerdan keyin PA9 AF7 push-pull,
+   *                                        ya'ni {00} oqimi TO'XTASHI kerak
+   *   5 - MX_USART2_UART_Init() o'tdi
+   *   6 - MX_LWIP_Init() o'tdi (ETH/PHY)
+   *   keyin - main loop heartbeat (uzluksiz tez miltillash)
+   *
+   * Diagnostika tugagach Boot_Mark() chaqiruvlarini olib tashlash mumkin.
+   */
+  Boot_Mark(1);
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -93,6 +110,7 @@ int main(void)
 
   /* Configure the system clock */
   SystemClock_Config();
+  Boot_Mark(2);
 
   /* USER CODE BEGIN SysInit */
   Queue_Init(&queue);
@@ -101,10 +119,14 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_LWIP_Init();
+  Boot_Mark(3);
   MX_DMA_Init();
-  MX_USART2_UART_Init();
   MX_USART1_UART_Init();
+  Boot_Mark(4);
+  MX_USART2_UART_Init();
+  Boot_Mark(5);
+  MX_LWIP_Init();
+  Boot_Mark(6);
   /* USER CODE BEGIN 2 */
   printf("\n==============================\n");
   printf("  QR50BE Gateway v1.0\n");
@@ -125,6 +147,18 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 	  Proccess();
+
+	  /* Heartbeat: main loop aylanayotganini ko'rsatadi. Uzluksiz miltillasa
+	     proshivka to'liq ishlayapti va muammo faqat UART ulanishida.
+	     (Proccess() ichidagi SuccessLED/FailLED vaqtincha aralashishi mumkin) */
+	  {
+	    static uint32_t hb_last = 0;
+	    if ((HAL_GetTick() - hb_last) >= 250u)
+	    {
+	      hb_last = HAL_GetTick();
+	      HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+	    }
+	  }
   }
   /* USER CODE END 3 */
 }
@@ -353,13 +387,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  Log_Flush(200);
-  while (1)
-  {
-	  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-	  HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
-	  for (volatile uint32_t i = 0; i < 500000; i++);
-  }
+  /* Log_Panic() qaytmaydi: buferni chiqaradi va LED larni o'zi sozlab
+     miltillaydi. Eski kod LED larni to'g'ridan-to'g'ri toggle qilardi va
+     SystemClock_Config() dan chaqirilganda (GPIOE kloki hali yoqilmagan)
+     hech qanday belgi bermay jimgina qotib qolardi. */
+  Log_Panic("Error_Handler", LOG_PANIC_ERROR_HANDLER);
   /* USER CODE END Error_Handler_Debug */
 }
 
