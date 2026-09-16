@@ -64,8 +64,6 @@ extern Queue queue;
 
 /* External variables --------------------------------------------------------*/
 extern HCD_HandleTypeDef hhcd_USB_OTG_HS;
-extern DMA_HandleTypeDef hdma_usart2_rx;
-extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN EV */
@@ -219,20 +217,6 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles DMA1 stream5 global interrupt.
-  */
-void DMA1_Stream5_IRQHandler(void)
-{
-  /* USER CODE BEGIN DMA1_Stream5_IRQn 0 */
-
-  /* USER CODE END DMA1_Stream5_IRQn 0 */
-  HAL_DMA_IRQHandler(&hdma_usart2_rx);
-  /* USER CODE BEGIN DMA1_Stream5_IRQn 1 */
-
-  /* USER CODE END DMA1_Stream5_IRQn 1 */
-}
-
-/**
   * @brief This function handles EXTI line[9:5] interrupts.
   */
 void EXTI9_5_IRQHandler(void)
@@ -258,60 +242,6 @@ void TIM1_UP_TIM10_IRQHandler(void)
   /* USER CODE BEGIN TIM1_UP_TIM10_IRQn 1 */
 
   /* USER CODE END TIM1_UP_TIM10_IRQn 1 */
-}
-
-/**
-  * @brief This function handles USART2 global interrupt.
-  */
-void USART2_IRQHandler(void)
-{
-  /* USER CODE BEGIN USART2_IRQn 0 */
-    if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE)) {
-        __HAL_UART_CLEAR_IDLEFLAG(&huart2);
-
-        HAL_UART_DMAStop(&huart2);
-
-        uint16_t data_length = DMA_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(huart2.hdmarx);
-
-        if (data_length > 0) {
-            // Faqat raqamlardan iborat qismni ajratib olish (\r, \n, bo'sh joy o'tkaziladi)
-            uint16_t start = 0;
-            uint16_t end = data_length;
-
-            // Boshidan va oxiridan whitespace/control belgilarni olib tashlash
-            while (start < end && rx_buffer_dma[start] <= ' ')
-                start++;
-            while (end > start && rx_buffer_dma[end - 1] <= ' ')
-                end--;
-
-            // Hammasi digit ekanligini tekshirish
-            uint8_t all_digits = (end > start) ? 1 : 0;
-            for (uint16_t i = start; i < end; i++) {
-                if (rx_buffer_dma[i] < '0' || rx_buffer_dma[i] > '9') {
-                    all_digits = 0;
-                    break;
-                }
-            }
-
-            if (all_digits) {
-                uint64_t val = 0;
-                for (uint16_t i = start; i < end; i++) {
-                    val = val * 10 + (rx_buffer_dma[i] - '0');
-                }
-                if (val > 0) {
-                    Queue_Enqueue(&queue, RS485_TYPE, val); //TODO: hozircha RS485_TYPE qo'shilmadi, keyinchalik qo'shish kerak
-                }
-            }
-        }
-
-        HAL_UART_Receive_DMA(&huart2, rx_buffer_dma, DMA_RX_BUFFER_SIZE);
-    }
-
-  /* USER CODE END USART2_IRQn 0 */
-  HAL_UART_IRQHandler(&huart2);
-  /* USER CODE BEGIN USART2_IRQn 1 */
-
-  /* USER CODE END USART2_IRQn 1 */
 }
 
 /**

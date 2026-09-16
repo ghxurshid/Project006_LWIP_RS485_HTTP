@@ -252,15 +252,7 @@ static void low_level_init(struct netif *netif)
   }
   else
   {
-    /* DIQQAT: bu yer USER CODE bloki EMAS - CubeMX qayta generatsiyasi
-       bu joyga Error_Handler() ni qaytarib qo'yadi, keyin tekshiring.
-
-       Nega Error_Handler() emas: HAL_ETH_Init() PHY dan RMII REF_CLK
-       (PA1, 50MHz) kelmasa DMABMR.SR ni kuta-kuta timeout bo'ladi. Eski
-       kodda bu butun qurilmani o'ldirardi - Wiegand ham, RS485 ham,
-       diagnostika ham. Gateway uchun bu noto'g'ri: tarmoq yo'q bo'lsa ham
-       kartalarni o'qib, queue ga to'plab turish kerak. */
-    LOG_XATO("ETH", "HAL_ETH_Init xatosi (PHY RMII klok yo'qmi?) - tarmoqsiz davom etamiz");
+    Error_Handler();
   }
 #endif /* LWIP_ARP || LWIP_ETHERNET */
 

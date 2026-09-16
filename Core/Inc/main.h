@@ -76,8 +76,6 @@ void Error_Handler(void);
 #define WG1_Pin GPIO_PIN_10
 #define WG1_GPIO_Port GPIOD
 #define WG1_EXTI_IRQn EXTI15_10_IRQn
-#define DERE_Pin GPIO_PIN_7
-#define DERE_GPIO_Port GPIOD
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
