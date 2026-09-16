@@ -345,22 +345,13 @@ void Proccess(void)
         const char *src = DataTypeName(item.dataType);
         uint32_t resolved = Config_GetResolvedIp();
 
-        if (resolved == 0u)
-        {
-            /* DNS hali resolve qilinmagan yoki IP address parse qilinmoqda.
-               Keyingi Proccess() chaqiruvida qayta urinish. */
-            LOG_INFO("SEND", "[%s] Kutilmoqda: DNS %s", src, Config_GetServerIp());
-            return;  /* queue'da tursin, keyingi vaqtda qayta urinish */
-        }
-
-        if (resolved == 0xFFFFFFFFu)
-        {
-            /* DNS timeout - error. Queue'dan olib tashlab, FailLED() chiqari. */
-            LOG_XATO("SEND", "[%s] DNS timeout - yuborilmadi: %lu", src, (unsigned long)item.value);
-            Queue_Dequeue(&queue, NULL);
-            FailLED();
+        /* Manzil hali tayyor emas: DNS so'ralmoqda yoki javob bermadi.
+           Element queue da QOLADI - kartani qayta bosdirmaslik uchun.
+           Bu yerda log yozilmaydi: main loop juda tez aylanadi va har
+           aylanishda satr yozilsa log buferi bir zumda to'lib ketardi.
+           Sababini Config_GetResolvedIp() o'zi bir marta yozadi. */
+        if (resolved == 0u || resolved == CONFIG_IP_UNRESOLVED)
             return;
-        }
 
         /* Resolved IP bilan TCP ulanish. uint32_t dan string'ga aylantiramiz. */
         char ip_str[16];

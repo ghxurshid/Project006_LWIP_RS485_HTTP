@@ -72,9 +72,23 @@ bool Config_TryCommand(const char *line, uint8_t len);
 const char *Config_GetServerIp(void);
 uint16_t    Config_GetServerPort(void);
 
-/* Resolved server IP (uint32_t) yoki 0 agar DNS ancora resolve qilinmagan.
-   DNS timeout bo'lsa 0xFFFFFFFF qaytadi - Proccess() buni faqat xato log qiladi. */
+/*
+ * Serverning tayyor IP manzili (host byte order emas, lwIP formatida).
+ *
+ * Qaytadi:
+ *   <ip>                    - yuborish mumkin
+ *   0                       - domen hali resolve qilinmoqda, keyinroq urinish
+ *   CONFIG_IP_UNRESOLVED    - manzil yaroqsiz yoki DNS javob bermadi
+ *
+ * IP manzil berilgan bo'lsa DNS umuman ishlatilmaydi. Domen berilgan bo'lsa
+ * DNS so'rovi SHU YERDA, birinchi yuborish urinishida boshlanadi - ataylab
+ * Config_Init() da emas, chunki o'sha paytda DHCP hali DNS server manzilini
+ * bermagan bo'lishi mumkin. Javob kelgach natija keshlanadi.
+ */
 uint32_t    Config_GetResolvedIp(void);
+
+/* Config_GetResolvedIp() dan: manzil yaroqsiz yoki DNS javob bermadi */
+#define CONFIG_IP_UNRESOLVED    0xFFFFFFFFu
 
 /* Debug chiqishi holati (ma'lumot uchun; log ni Log_SetEnabled() boshqaradi) */
 bool Config_IsDebugEnabled(void);

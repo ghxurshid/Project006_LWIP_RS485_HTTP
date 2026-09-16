@@ -62,7 +62,8 @@ _Static_assert((sizeof(ConfigBlob) % 4u) == 0u,
                "ConfigBlob o'lchami 4 ga karrali bo'lishi kerak");
 
 static ConfigBlob s_cfg;
-static uint32_t dns_timeout_start = 0u;  /* DNS query boshlangan vaqti */
+static uint32_t dns_timeout_start = 0u;   /* DNS so'rovi boshlangan vaqt */
+static bool     dns_query_started = false; /* joriy domen uchun so'rov ketganmi */
 
 #define DNS_TIMEOUT_MS  3000u             /* 3 soniya: DNS javob bermasa TCP o'tadi */
 
@@ -82,8 +83,12 @@ static void dns_callback(const char *name, const ip_addr_t *ipaddr, void *arg)
     }
     else
     {
-        LOG_XATO("DNS", "Failed to resolve: %s", name);
+        /* Topilmadi. Keshni bo'sh qoldiramiz va bayroqni tushiramiz - keyingi
+           yuborish urinishida yangi so'rov ketadi (DNS server kech javob
+           beradigan yoki tarmoq endi ko'tarilgan holat uchun). */
+        LOG_XATO("DNS", "Topilmadi: %s", name);
         s_cfg.resolved_ip = 0u;
+        dns_query_started = false;
     }
 }
 
@@ -135,6 +140,16 @@ static void ConfigBlink(uint8_t times)
 }
 
 /* ================= Zavod qiymatlari ================= */
+
+/*
+ * Manzil o'zgargach chaqiriladi: keshlangan natijani va DNS so'rovi holatini
+ * bekor qiladi, shunda Config_GetResolvedIp() yangi manzil uchun ishlaydi.
+ */
+static void ResetResolution(void)
+{
+    s_cfg.resolved_ip = 0u;
+    dns_query_started = false;
+}
 
 static void LoadDefaults(void)
 {
@@ -220,6 +235,12 @@ void Config_Init(void)
         LOG_INFO("CFG", "Saqlangan sozlama yo'q - zavod qiymatlari");
     }
 
+    /* Flash da saqlangan resolved_ip ga ishonmaymiz: u yozilganda DNS javobi
+       hali kelmagan bo'lishi mumkin edi, bundan tashqari IP vaqt o'tib
+       o'zgargan bo'lishi ham mumkin. Manzil birinchi yuborishda qaytadan
+       aniqlanadi. */
+    ResetResolution();
+
     LOG_INFO("CFG", "Server: %s:%u | Debug: %s",
              s_cfg.ip, (unsigned)s_cfg.port, s_cfg.debug ? "YOQIQ" : "O'CHIQ");
 }
@@ -303,14 +324,13 @@ static bool ApplyServer(char *arg)
 {
     char *colon;
     uint16_t port;
-    ip_addr_t addr;
 
     if (strcmp(arg, "PROD") == 0)
     {
         strncpy(s_cfg.ip, CONFIG_PROD_SERVER_IP, CONFIG_IP_STR_MAX - 1u);
         s_cfg.ip[CONFIG_IP_STR_MAX - 1u] = '\0';
         s_cfg.port = CONFIG_PROD_SERVER_PORT;
-        s_cfg.resolved_ip = 0u;  /* zarurat bo'lsa DNS resolve qiladi */
+        ResetResolution();
         return true;
     }
 
@@ -319,7 +339,7 @@ static bool ApplyServer(char *arg)
         strncpy(s_cfg.ip, CONFIG_TEST_SERVER_IP, CONFIG_IP_STR_MAX - 1u);
         s_cfg.ip[CONFIG_IP_STR_MAX - 1u] = '\0';
         s_cfg.port = CONFIG_TEST_SERVER_PORT;
-        s_cfg.resolved_ip = 0u;
+        ResetResolution();
         return true;
     }
 
@@ -335,27 +355,23 @@ static bool ApplyServer(char *arg)
     if (strlen(arg) >= CONFIG_IP_STR_MAX)
         return false;
 
-    /* IP addressmi yoki domen? */
+    /* IP manzil bo'lsa formatini shu yerda tekshiramiz - yaroqsiz kod
+       flash ga yozilib qolmasin. Domen uchun DNS so'rovi keyinroq,
+       Config_GetResolvedIp() da boshlanadi. */
     if (IsIpAddress(arg))
     {
-        /* IP address: darhol parse qil */
         if (!ParseIp(arg))
             return false;
-        ipaddr_aton(arg, &addr);
-        s_cfg.resolved_ip = addr.addr;
-        LOG_OK("SRV", "IP: %s", arg);
+        LOG_INFO("SRV", "IP manzil: %s", arg);
     }
     else
     {
-        /* Domen: async resolve qil */
-        s_cfg.resolved_ip = 0u;  /* belgi: unresolved */
-        dns_timeout_start = HAL_GetTick();
-        dns_gethostbyname(arg, NULL, dns_callback, NULL);
-        LOG_INFO("SRV", "Resolving domain: %s (timeout %ums)", arg, DNS_TIMEOUT_MS);
+        LOG_INFO("SRV", "Domen: %s (DNS birinchi yuborishda so'raladi)", arg);
     }
 
     strcpy(s_cfg.ip, arg);
     s_cfg.port = port;
+    ResetResolution();
     return true;
 }
 
@@ -443,17 +459,54 @@ uint16_t Config_GetServerPort(void)
  */
 uint32_t Config_GetResolvedIp(void)
 {
-    /* DNS timeout tekshiruvi: 3s dan ko'p o'tgan bo'lsa fallback */
-    if (s_cfg.resolved_ip == 0u &&
-        s_cfg.ip[0] != '\0' &&
-        !IsIpAddress(s_cfg.ip) &&
-        (HAL_GetTick() - dns_timeout_start > DNS_TIMEOUT_MS))
+    ip_addr_t addr;
+
+    if (s_cfg.ip[0] == '\0')
+        return CONFIG_IP_UNRESOLVED;
+
+    /* IP manzil: DNS umuman kerak emas. Har chaqiruvda qayta parse qilinadi -
+       bu bir necha mikrosekund va qo'shimcha holat saqlashdan ishonchliroq. */
+    if (IsIpAddress(s_cfg.ip))
     {
-        LOG_XATO("DNS", "Timeout %ums - %s", DNS_TIMEOUT_MS, s_cfg.ip);
-        s_cfg.resolved_ip = 0xFFFFFFFFu;  /* special: timeout belgisi */
+        if (ipaddr_aton(s_cfg.ip, &addr))
+            return addr.addr;
+
+        LOG_XATO("SRV", "Yaroqsiz IP manzil: %s", s_cfg.ip);
+        return CONFIG_IP_UNRESOLVED;
     }
 
-    return s_cfg.resolved_ip;
+    /* Domen, javob allaqachon keshlangan */
+    if (s_cfg.resolved_ip != 0u)
+        return s_cfg.resolved_ip;
+
+    /* Domen, kesh bo'sh: so'rovni shu yerda boshlaymiz */
+    if (!dns_query_started)
+    {
+        dns_query_started = true;
+        dns_timeout_start = HAL_GetTick();
+
+        /* Javob keshda bo'lsa dns_gethostbyname() ERR_OK qaytarib, natijani
+           darhol addr ga yozadi va callback ni chaqirmaydi */
+        if (dns_gethostbyname(s_cfg.ip, &addr, dns_callback, NULL) == ERR_OK)
+        {
+            s_cfg.resolved_ip = addr.addr;
+            return s_cfg.resolved_ip;
+        }
+
+        LOG_INFO("DNS", "So'rov yuborildi: %s", s_cfg.ip);
+        return 0u;
+    }
+
+    /* So'rov ketgan, javob kutilmoqda */
+    if ((HAL_GetTick() - dns_timeout_start) > DNS_TIMEOUT_MS)
+    {
+        LOG_XATO("DNS", "Javob yo'q (%ums): %s - qayta urinamiz",
+                 DNS_TIMEOUT_MS, s_cfg.ip);
+        dns_query_started = false;      /* keyingi chaqiruvda yangi so'rov */
+        return CONFIG_IP_UNRESOLVED;
+    }
+
+    return 0u;
 }
 
 bool Config_IsDebugEnabled(void)
