@@ -338,13 +338,39 @@ void Proccess(void)
         }
     }
 
-    // 2. Queue dan serverga yuborish (faqat IP olingan bo'lsa)
+    // 2. Queue dan serverga yuborish (faqat IP olingan va DNS resolved bo'lsa)
     QueueItem item;
     if (gnetif.ip_addr.addr != 0 && Queue_Peek(&queue, &item))
     {
         const char *src = DataTypeName(item.dataType);
+        uint32_t resolved = Config_GetResolvedIp();
 
-        if (SendDataRawTCP(Config_GetServerIp(), Config_GetServerPort(), item.value) == ERR_OK)
+        if (resolved == 0u)
+        {
+            /* DNS hali resolve qilinmagan yoki IP address parse qilinmoqda.
+               Keyingi Proccess() chaqiruvida qayta urinish. */
+            LOG_INFO("SEND", "[%s] Kutilmoqda: DNS %s", src, Config_GetServerIp());
+            return;  /* queue'da tursin, keyingi vaqtda qayta urinish */
+        }
+
+        if (resolved == 0xFFFFFFFFu)
+        {
+            /* DNS timeout - error. Queue'dan olib tashlab, FailLED() chiqari. */
+            LOG_XATO("SEND", "[%s] DNS timeout - yuborilmadi: %lu", src, (unsigned long)item.value);
+            Queue_Dequeue(&queue, NULL);
+            FailLED();
+            return;
+        }
+
+        /* Resolved IP bilan TCP ulanish. uint32_t dan string'ga aylantiramiz. */
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u",
+                 (unsigned)((resolved >>  0) & 0xFFu),
+                 (unsigned)((resolved >>  8) & 0xFFu),
+                 (unsigned)((resolved >> 16) & 0xFFu),
+                 (unsigned)((resolved >> 24) & 0xFFu));
+
+        if (SendDataRawTCP(ip_str, Config_GetServerPort(), item.value) == ERR_OK)
         {
             Queue_Dequeue(&queue, NULL);
             SuccessLED();

@@ -21,6 +21,7 @@
 #include "config.h"
 #include "main.h"   /* LED3_Pin, HAL */
 #include "log.h"
+#include "lwip/dns.h"
 #include <string.h>
 
 /* ================= Flash dagi yozuv ================= */
@@ -38,8 +39,9 @@
 
 /*
  * Word (4 bayt) ga tekislangan: magic(4) version(1) debug(1) port(2)
- * ip[16] crc(4) = 28 bayt = 7 word. HAL_FLASH_Program() word bilan yozadi,
- * shuning uchun o'lcham 4 ga karrali bo'lishi shart.
+ * ip[64] resolved_ip(4) crc(4) = 80 bayt = 20 word. HAL_FLASH_Program() word
+ * bilan yozadi, shuning uchun o'lcham 4 ga karrali bo'lishi shart.
+ * resolved_ip: DNS natijasi (0 = unresolved, yoki IP uint32_t).
  */
 typedef struct
 {
@@ -48,7 +50,8 @@ typedef struct
     uint8_t  debug;
     uint16_t port;
     char     ip[CONFIG_IP_STR_MAX];
-    uint32_t crc;                    /* undan oldingi hamma bayt ustidan */
+    uint32_t resolved_ip;               /* DNS query natijasi (0 = unresolved) */
+    uint32_t crc;                       /* undan oldingi hamma bayt ustidan */
 } ConfigBlob;
 
 #define CONFIG_CRC_LEN   (sizeof(ConfigBlob) - sizeof(uint32_t))
@@ -59,6 +62,30 @@ _Static_assert((sizeof(ConfigBlob) % 4u) == 0u,
                "ConfigBlob o'lchami 4 ga karrali bo'lishi kerak");
 
 static ConfigBlob s_cfg;
+static uint32_t dns_timeout_start = 0u;  /* DNS query boshlangan vaqti */
+
+#define DNS_TIMEOUT_MS  3000u             /* 3 soniya: DNS javob bermasa TCP o'tadi */
+
+/* ================= DNS Callback ================= */
+
+static void dns_callback(const char *name, const ip_addr_t *ipaddr, void *arg)
+{
+    (void)arg;  /* unused */
+
+    if (ipaddr != NULL)
+    {
+        s_cfg.resolved_ip = ipaddr->addr;
+        LOG_OK("DNS", "Resolved: %s -> %u.%u.%u.%u",
+               name,
+               ip4_addr1(ipaddr), ip4_addr2(ipaddr),
+               ip4_addr3(ipaddr), ip4_addr4(ipaddr));
+    }
+    else
+    {
+        LOG_XATO("DNS", "Failed to resolve: %s", name);
+        s_cfg.resolved_ip = 0u;
+    }
+}
 
 /* ================= CRC32 ================= */
 
@@ -199,6 +226,22 @@ void Config_Init(void)
 
 /* ================= Buyruq tahlili ================= */
 
+/* Domen yoki IP address? Agar faqat raqam va nuqta bo'lsa IP. */
+static bool IsIpAddress(const char *s)
+{
+    if (!s || !*s)
+        return false;
+
+    while (*s)
+    {
+        if ((*s < '0' || *s > '9') && *s != '.')
+            return false;
+        s++;
+    }
+
+    return true;
+}
+
 /* "192.168.1.50" -> to'g'ri bo'lsa true. Nuqta bilan ajratilgan 4 ta
    0..255 oralig'idagi son, oldida nol bo'lishi mumkin ("010" = 10). */
 static bool ParseIp(const char *s)
@@ -260,12 +303,14 @@ static bool ApplyServer(char *arg)
 {
     char *colon;
     uint16_t port;
+    ip_addr_t addr;
 
     if (strcmp(arg, "PROD") == 0)
     {
         strncpy(s_cfg.ip, CONFIG_PROD_SERVER_IP, CONFIG_IP_STR_MAX - 1u);
         s_cfg.ip[CONFIG_IP_STR_MAX - 1u] = '\0';
         s_cfg.port = CONFIG_PROD_SERVER_PORT;
+        s_cfg.resolved_ip = 0u;  /* zarurat bo'lsa DNS resolve qiladi */
         return true;
     }
 
@@ -274,22 +319,40 @@ static bool ApplyServer(char *arg)
         strncpy(s_cfg.ip, CONFIG_TEST_SERVER_IP, CONFIG_IP_STR_MAX - 1u);
         s_cfg.ip[CONFIG_IP_STR_MAX - 1u] = '\0';
         s_cfg.port = CONFIG_TEST_SERVER_PORT;
+        s_cfg.resolved_ip = 0u;
         return true;
     }
 
-    /* <ip>:<port> - ikkisi ham majburiy, chunki yangi serverda eski port
-       qolib ketsa buni sezish qiyin bo'lardi */
+    /* <ip_yoki_domen>:<port> - ikkisi ham majburiy */
     colon = strchr(arg, ':');
     if (colon == NULL)
         return false;
 
     *colon = '\0';
-
-    if (!ParseIp(arg) || !ParsePort(colon + 1u, &port))
+    if (!ParsePort(colon + 1u, &port))
         return false;
 
     if (strlen(arg) >= CONFIG_IP_STR_MAX)
         return false;
+
+    /* IP addressmi yoki domen? */
+    if (IsIpAddress(arg))
+    {
+        /* IP address: darhol parse qil */
+        if (!ParseIp(arg))
+            return false;
+        ipaddr_aton(arg, &addr);
+        s_cfg.resolved_ip = addr.addr;
+        LOG_OK("SRV", "IP: %s", arg);
+    }
+    else
+    {
+        /* Domen: async resolve qil */
+        s_cfg.resolved_ip = 0u;  /* belgi: unresolved */
+        dns_timeout_start = HAL_GetTick();
+        dns_gethostbyname(arg, NULL, dns_callback, NULL);
+        LOG_INFO("SRV", "Resolving domain: %s (timeout %ums)", arg, DNS_TIMEOUT_MS);
+    }
 
     strcpy(s_cfg.ip, arg);
     s_cfg.port = port;
@@ -367,6 +430,30 @@ const char *Config_GetServerIp(void)
 uint16_t Config_GetServerPort(void)
 {
     return s_cfg.port;
+}
+
+/*
+ * Resolved server IP address (uint32_t), yoki 0 agar:
+ *   - hozir IP address bo'lsa DNS kerak emas (IP address avval resolve qilingan)
+ *   - domen resolve qilinayotgan bo'lsa (DNS javob kutilmoqda)
+ *   - DNS timeout bo'lsa
+ *
+ * Proccess() ichida tekshiriladi: agar 0 bo'lsa IP yana DNS resolve qilinsa
+ * callback natijasi yoziladi, aks holda TCP to'xtaydi.
+ */
+uint32_t Config_GetResolvedIp(void)
+{
+    /* DNS timeout tekshiruvi: 3s dan ko'p o'tgan bo'lsa fallback */
+    if (s_cfg.resolved_ip == 0u &&
+        s_cfg.ip[0] != '\0' &&
+        !IsIpAddress(s_cfg.ip) &&
+        (HAL_GetTick() - dns_timeout_start > DNS_TIMEOUT_MS))
+    {
+        LOG_XATO("DNS", "Timeout %ums - %s", DNS_TIMEOUT_MS, s_cfg.ip);
+        s_cfg.resolved_ip = 0xFFFFFFFFu;  /* special: timeout belgisi */
+    }
+
+    return s_cfg.resolved_ip;
 }
 
 bool Config_IsDebugEnabled(void)

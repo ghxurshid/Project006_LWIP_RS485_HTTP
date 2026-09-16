@@ -40,8 +40,9 @@
 /* Zavod holatida debug chiqishi yoqilgan */
 #define CONFIG_DEFAULT_DEBUG    true
 
-/* "255.255.255.255" + '\0' */
-#define CONFIG_IP_STR_MAX       16u
+/* IP yoki domen nomi. IP: "255.255.255.255" (15 belgi), domen: "very-long-domain-name.example.com" (~40 belgi).
+   64 bayt barcha amaliy domenlar uchun yetarli (RFC max 253). */
+#define CONFIG_IP_STR_MAX       64u
 
 /*
  * Flash dan sozlamalarni o'qiydi. Yozuv yo'q yoki buzilgan bo'lsa zavod
@@ -70,6 +71,10 @@ bool Config_TryCommand(const char *line, uint8_t len);
 /* Joriy server manzili - Proccess() har yuborishdan oldin shundan oladi */
 const char *Config_GetServerIp(void);
 uint16_t    Config_GetServerPort(void);
+
+/* Resolved server IP (uint32_t) yoki 0 agar DNS ancora resolve qilinmagan.
+   DNS timeout bo'lsa 0xFFFFFFFF qaytadi - Proccess() buni faqat xato log qiladi. */
+uint32_t    Config_GetResolvedIp(void);
 
 /* Debug chiqishi holati (ma'lumot uchun; log ni Log_SetEnabled() boshqaradi) */
 bool Config_IsDebugEnabled(void);
