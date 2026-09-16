@@ -48,6 +48,7 @@ static volatile uint8_t  s_busy;     /* DMA hozir band */
 static volatile uint8_t  s_ready;    /* Log_Init() muvaffaqiyatli bajarildi */
 static volatile uint8_t  s_overflow; /* oxirgi belgilanishdan beri xabar tashlandi */
 static volatile uint32_t s_dropped;
+static volatile uint8_t  s_enabled = 1u; /* debug chiqishi (config dan) */
 
 /* Tashlangan joyni ko'rsatuvchi belgi. printf orqali emas, to'g'ridan-to'g'ri
    buferga yoziladi - aks holda Log_Write o'zini rekursiv chaqirgan bo'lardi. */
@@ -465,11 +466,23 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   log_kick();
 }
 
+void Log_SetEnabled(bool enabled)
+{
+  /* Buferda turgan xabarlar baribir chiqib bo'lsin - o'chirish paytida
+     yarim yuborilgan satr terminalda osilib qolmaydi */
+  s_enabled = enabled ? 1u : 0u;
+}
+
 /* ================= newlib retarget ================= */
 
 int _write(int file, char *ptr, int len)
 {
   (void)file;
+
+  if (!s_enabled)
+  {
+    return len;                     /* debug o'chirilgan - jimgina tashlanadi */
+  }
 
   if (s_ready)
   {

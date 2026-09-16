@@ -25,6 +25,7 @@
 #include "hid_reader.h"
 #include "usbh_hidkbd.h"
 #include "log.h"
+#include "config.h"
 #include <string.h>
 
 /* Ikki HidReader_Process() chaqiruvi orasi bundan uzun bo'lsa main loop
@@ -112,7 +113,14 @@ static void FinishScan(void)
         uint64_t value;
         s_line[s_len] = '\0';
 
-        if (!ParseValue(s_line, s_len, &value))
+        /* Config buyrug'i ID emas: u yerda to'liq ishlanadi va queue ga
+           umuman tushmaydi. ParseValue() dan OLDIN tekshiriladi, aks holda
+           raqam bo'lmagan satr "yaroqsiz kod" bo'lib xatoga chiqardi. */
+        if (Config_TryCommand(s_line, s_len))
+        {
+            /* javobni Config_TryCommand() o'zi log va LED orqali berdi */
+        }
+        else if (!ParseValue(s_line, s_len, &value))
             LOG_XATO("HID", "Yaroqsiz kod \"%s\" (1..%lu oralig'idagi raqam kutiladi) - tashlandi", s_line, (unsigned long)HID_READER_MAX_VALUE);
         else if (Queue_Enqueue(s_queue, HID_TYPE, value))
             LOG_INFO("HID", "QR o'qildi: %lu -> queue (%u/%u)", (unsigned long)value, Queue_Count(s_queue), (unsigned)QUEUE_MAX_ITEMS);

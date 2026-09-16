@@ -11,6 +11,7 @@
 #define LOG_H_
 
 #include "stdio.h"
+#include "stdbool.h"
 #include "stm32f4xx_hal.h"
 
 /* USART1 TX halqa buferi. 2 ning darajasi bo'lishi SHART (mask bilan wrap). */
@@ -34,6 +35,14 @@ void Log_Write(const char *data, uint16_t len);
 
 /* Bufer bo'shashini kutadi. Faqat reset/Error_Handler oldidan ishlatilsin. */
 void Log_Flush(uint32_t timeout_ms);
+
+/*
+ * Debug chiqishini yoqadi / o'chiradi (config QR i orqali boshqariladi).
+ * O'chirilganda printf jimgina tashlanadi.
+ * Log_Panic() bunga bo'ysunmaydi - u o'zining alohida yo'li bilan yozadi,
+ * shuning uchun avariya xabari debug o'chiq bo'lsa ham yo'qolmaydi.
+ */
+void Log_SetEnabled(bool enabled);
 
 /* Bufer to'lib qolgani sababli tashlab yuborilgan baytlarning umumiy soni. */
 uint32_t Log_DroppedBytes(void);

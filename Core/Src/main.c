@@ -29,6 +29,7 @@
 #include "Wiegand.h"
 #include "log.h"
 #include "hid_reader.h"
+#include "config.h"
 
 /* USER CODE END Includes */
 
@@ -137,6 +138,12 @@ int main(void)
          (unsigned long)HAL_RCC_GetPCLK2Freq());
   printf("==============================\n");
   LOG_OK("SYS", "Barcha periferiyalar tayyor");
+
+  /* Sozlamalar flash dan o'qiladi. Log_SetEnabled() ataylab shundan KEYIN
+     qo'llanadi: banner va CFG satrlari debug holatidan qat'i nazar chiqsin,
+     shunda qurilma "jim" bo'lib qolsa ham sababi terminalda ko'rinadi. */
+  Config_Init();
+  Log_SetEnabled(Config_IsDebugEnabled());
   /* USER CODE END 2 */
 
   /* Infinite loop */

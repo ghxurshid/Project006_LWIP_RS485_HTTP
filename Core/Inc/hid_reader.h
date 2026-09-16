@@ -30,8 +30,10 @@
  */
 #define HID_READER_SCAN_TIMEOUT_MS 150u
 
-/* Bitta skanerlashdagi maksimal belgilar soni (terminatorsiz). */
-#define HID_READER_LINE_MAX        32u
+/* Bitta skanerlashdagi maksimal belgilar soni (terminatorsiz).
+   Config buyruqlari ham shu satrga yig'iladi, eng uzuni
+   "#SRV=255.255.255.255:65535" = 26 belgi - zaxira bilan 64 olindi. */
+#define HID_READER_LINE_MAX        64u
 
 /*
  * Qabul qilinadigan eng katta qiymat. SendDataRawTCP() qiymatni

@@ -32,6 +32,7 @@
 #include "usb_host.h"
 
 #include "log.h"
+#include "config.h"
 
 /* USER CODE END Header */
 
@@ -46,11 +47,9 @@
 
 /* USER CODE BEGIN 0 */
 
-#define SERVER_IP      "185.74.5.250"
-#define SERVER_PORT    5488
-
-#define SERVER_IP_TEST   "10.0.40.18"
-#define SERVER_PORT_TEST 23
+/* Server manzili endi config.h dagi zavod qiymatlaridan boshlanadi va QR
+   buyrug'i (#SRV=...) bilan o'zgartiriladi - Config_GetServerIp/Port() ga
+   qarang. Shuning uchun bu yerda qattiq yozilgan manzil qolmadi. */
 
 #define PHY_ADDRESS 0x01
 #define TCP_CONNECT_TIMEOUT_MS  5000
@@ -345,7 +344,7 @@ void Proccess(void)
     {
         const char *src = DataTypeName(item.dataType);
 
-        if (SendDataRawTCP(SERVER_IP, SERVER_PORT, item.value) == ERR_OK)
+        if (SendDataRawTCP(Config_GetServerIp(), Config_GetServerPort(), item.value) == ERR_OK)
         {
             Queue_Dequeue(&queue, NULL);
             SuccessLED();
