@@ -2,8 +2,7 @@
  * Queue.c - Static Ring Buffer (interrupt-safe)
  *
  * Multi-producer / single-consumer model:
- *   - Producerlar faqat head ni yozadi: RS485 (USART2 ISR), Wiegand va
- *     USB HID (main loop)
+ *   - Producerlar faqat head ni yozadi: USB HID (main loop)
  *   - Consumer (main loop, Proccess) faqat tail ni yozadi
  *   - Enqueue qisqa critical section ichida: aks holda main loop dagi
  *     enqueue o'rtasida ISR enqueue qilsa ikkalasi bitta katakka yozib,

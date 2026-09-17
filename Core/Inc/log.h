@@ -18,10 +18,12 @@
 #define LOG_TX_BUF_SIZE 2048
 
 /*
- * Loggerni ishga tushiradi: DMA2_Stream7 (USART1_TX) ni sozlaydi va stdout ni
- * statik buferli satrli rejimga o'tkazadi.
- * MX_USART1_UART_Init() ichida, HAL_UART_Init() dan keyin chaqiriladi -
- * shunda birinchi printf gacha logger tayyor bo'ladi.
+ * Loggerni ishga tushiradi: USART1 ni (PA9, 115200 8N1, faqat TX) va
+ * DMA2_Stream7 ni sozlaydi, stdout ni statik buferli satrli rejimga o'tkazadi.
+ *
+ * USART1 CubeMX da sozlanmagan - uni butunlay shu modul ko'taradi, shuning
+ * uchun SystemClock_Config() dan KEYIN va birinchi printf dan OLDIN
+ * chaqirilishi shart (BRR PCLK2 dan hisoblanadi).
  */
 void Log_Init(void);
 

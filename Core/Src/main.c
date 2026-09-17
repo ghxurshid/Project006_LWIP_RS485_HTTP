@@ -26,7 +26,6 @@
 #include "stdio.h"
 #include "Queue.h"
 #include "string.h"
-#include "Wiegand.h"
 #include "log.h"
 #include "hid_reader.h"
 #include "config.h"
@@ -53,7 +52,6 @@
 /* USER CODE BEGIN PV */
 uint8_t rx_buffer_dma[DMA_RX_BUFFER_SIZE];
 
-WIEGAND wg;
 __attribute__((section(".ccmram"))) Queue queue;
 /* USER CODE END PV */
 
@@ -85,13 +83,10 @@ int main(void)
    * kod qayergacha yetganini bildiradi:
    *
    *   1 - main() ga kirildi (startup sog'lom)
-   *   2 - SystemClock_Config() o'tdi (HSE/PLL 168MHz ishga tushdi)
-   *   3 - MX_GPIO_Init() o'tdi
-   *   4 - MX_USART1_UART_Init() o'tdi  <-- shu yerdan keyin PA9 AF7 push-pull,
-   *                                        ya'ni {00} oqimi TO'XTASHI kerak
-   *   5 - MX_USART2_UART_Init() o'tdi
-   *   6 - MX_LWIP_Init() o'tdi (ETH/PHY)
-   *   keyin - main loop heartbeat (uzluksiz tez miltillash)
+   *
+   * Keyingi bosqichlarni kuzatish kerak bo'lsa, tegishli joyga Boot_Mark(2),
+   * Boot_Mark(3), ... qo'shiladi. Log_Init() dan keyin PA9 AF7 push-pull
+   * bo'ladi (ya'ni {00} oqimi to'xtaydi) va printf terminalga chiqa boshlaydi.
    *
    * Diagnostika tugagach Boot_Mark() chaqiruvlarini olib tashlash mumkin.
    */
@@ -111,8 +106,11 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
+  /* Log_Init() USART1 ni o'zi ko'taradi (CubeMX da sozlanmagan). Eng boshida
+     chaqiriladi - shunda undan keyingi hamma printf terminalga tushadi. */
+  //Log_Init();
+
   Queue_Init(&queue);
-  Wiegand_Init(&wg);
   HidReader_Init(&queue);
   /* USER CODE END SysInit */
 
@@ -224,10 +222,12 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, LED1_Pin|LED2_Pin|LED3_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : BTN1_Pin BTN2_Pin BTN3_Pin */
   GPIO_InitStruct.Pin = BTN1_Pin|BTN2_Pin|BTN3_Pin;
@@ -242,24 +242,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : WG0_Pin */
-  GPIO_InitStruct.Pin = WG0_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  /*Configure GPIO pin : PA9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(WG0_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : WG1_Pin */
-  GPIO_InitStruct.Pin = WG1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(WG1_GPIO_Port, &GPIO_InitStruct);
-
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
-
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 }
 

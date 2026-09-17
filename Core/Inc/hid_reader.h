@@ -9,8 +9,7 @@
  *          -> Enter/Tab yoki pauza -> raqamga aylantiriladi
  *          -> Queue_Enqueue(HID_TYPE)
  *
- * Keyin Proccess() uni Wiegand va RS485 bilan bir xil yo'l orqali serverga
- * yuboradi.
+ * Keyin Proccess() uni queue dan olib serverga yuboradi.
  *
  * Created on: 2026
  * Author: Xurshid Xujamatov

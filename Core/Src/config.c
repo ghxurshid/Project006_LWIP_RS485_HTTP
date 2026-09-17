@@ -11,8 +11,8 @@
  * DIQQAT: sektorni o'chirish ~1-2 soniya davom etadi va shu vaqt ichida CPU
  * flash dan buyruq o'qiy olmaydi - main loop ham, uzilishlar ham to'xtab
  * turadi. Shuning uchun yozish faqat foydalanuvchi config QR ni skanerlaganda
- * bajariladi, ya'ni ataylab va kamdan-kam. Shu payt kelgan Wiegand impulsi
- * yo'qolishi mumkin.
+ * bajariladi, ya'ni ataylab va kamdan-kam. Shu payt kelgan ETH paketi yoki
+ * USB HID hodisasi yo'qolishi mumkin.
  *
  * Created on: 2026
  * Author: Xurshid Xujamatov

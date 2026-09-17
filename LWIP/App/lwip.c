@@ -27,7 +27,6 @@
 #include <string.h>
 
 #include "Queue.h"
-#include "Wiegand.h"
 #include "hid_reader.h"
 #include "usb_host.h"
 
@@ -64,7 +63,6 @@ static uint8_t aes_key[AES_KEY_SIZE] = {
 	0x73, 0x6F, 0x4E, 0x65
 };
 
-extern WIEGAND wg;
 extern Queue queue;
 
 // TCP yuborish holati
@@ -316,7 +314,6 @@ static const char *DataTypeName(DataType type)
 {
     switch (type)
     {
-    case WIEGAND_TYPE: return "WG";
     case RS485_TYPE:   return "RS485";
     case HID_TYPE:     return "HID";
     default:           return "?";
@@ -325,20 +322,7 @@ static const char *DataTypeName(DataType type)
 
 void Proccess(void)
 {
-    // 1. Wiegand — RFID kartadan ma'lumot o'qish
-    if (Wiegand_Available(&wg))
-    {
-        uint64_t wcode = Wiegand_GetCode(&wg);
-        if (wcode > 0)
-        {
-            if (Queue_Enqueue(&queue, WIEGAND_TYPE, wcode))
-                LOG_INFO("WG ", "RFID o'qildi: %lu -> queue (%u/%u)", (unsigned long)wcode, Queue_Count(&queue), (unsigned)QUEUE_MAX_ITEMS);
-            else
-                LOG_XATO("WG ", "Queue to'la! Ma'lumot yo'qoldi: %lu (%u/%u)", (unsigned long)wcode, Queue_Count(&queue), (unsigned)QUEUE_MAX_ITEMS);
-        }
-    }
-
-    // 2. Queue dan serverga yuborish (faqat IP olingan va DNS resolved bo'lsa)
+    // Queue dan serverga yuborish (faqat IP olingan va DNS resolved bo'lsa)
     QueueItem item;
     if (gnetif.ip_addr.addr != 0 && Queue_Peek(&queue, &item))
     {

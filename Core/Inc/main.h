@@ -70,12 +70,6 @@ void Error_Handler(void);
 #define LED2_GPIO_Port GPIOE
 #define LED3_Pin GPIO_PIN_15
 #define LED3_GPIO_Port GPIOE
-#define WG0_Pin GPIO_PIN_9
-#define WG0_GPIO_Port GPIOD
-#define WG0_EXTI_IRQn EXTI9_5_IRQn
-#define WG1_Pin GPIO_PIN_10
-#define WG1_GPIO_Port GPIOD
-#define WG1_EXTI_IRQn EXTI15_10_IRQn
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
