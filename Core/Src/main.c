@@ -27,6 +27,7 @@
 #include "Queue.h"
 #include "string.h"
 #include "log.h"
+#include "log_sink_uart.h"
 #include "hid_reader.h"
 #include "config.h"
 
@@ -48,6 +49,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 uint8_t rx_buffer_dma[DMA_RX_BUFFER_SIZE];
@@ -58,6 +61,8 @@ __attribute__((section(".ccmram"))) Queue queue;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
+static void MX_USART1_UART_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -106,9 +111,13 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  /* Log_Init() USART1 ni o'zi ko'taradi (CubeMX da sozlanmagan). Eng boshida
-     chaqiriladi - shunda undan keyingi hamma printf terminalga tushadi. */
-  //Log_Init();
+  /* Log ning 1-bosqichi: stdout ni statik buferga o'tkazadi va halqa buferni
+     ochadi. Chiqish kanali hali yo'q (USART CubeMX da MX_..._Init() da
+     ko'tariladi), shuning uchun shu yerdan keyingi printf lar buferda
+     to'planib turadi va kanal ulangach hammasi birdan chiqadi.
+     BIRINCHI printf dan OLDIN chaqirilishi shart - aks holda newlib
+     stdout uchun buferni o'zi malloc qilib oladi. */
+  Log_Init(NULL);
 
   Queue_Init(&queue);
   HidReader_Init(&queue);
@@ -117,8 +126,20 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_LWIP_Init();
+  MX_DMA_Init();
   MX_USB_HOST_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  /* Log ning 2-bosqichi: CubeMX sozlab bergan UART ni chiqish kanali qilib
+     ulaymiz. Shu qatordan keyin yuqorida to'plangan hamma narsa ham chiqadi.
+     #ifdef kerak: USART .ioc da yoqilmaguncha huart1 ham, HAL UART drayveri
+     ham mavjud emas - u holda loyiha baribir yig'iladi, printf esa jimgina
+     tashlanadi. Boshqa kanalga (USB CDC, TCP, boshqa UART) o'tish uchun
+     faqat shu qatorni almashtirish yetarli. */
+#ifdef HAL_UART_MODULE_ENABLED
+  Log_Init(LogSinkUart_Create(&huart1));
+#endif
+
   printf("\n==============================\n");
   printf("  QR50BE Gateway v1.0\n");
   printf("  Queue: %u element\n", (unsigned)QUEUE_MAX_ITEMS);
@@ -208,6 +229,55 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -226,9 +296,6 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, LED1_Pin|LED2_Pin|LED3_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);
-
   /*Configure GPIO pins : BTN1_Pin BTN2_Pin BTN3_Pin */
   GPIO_InitStruct.Pin = BTN1_Pin|BTN2_Pin|BTN3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
@@ -241,13 +308,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PA9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 }
 

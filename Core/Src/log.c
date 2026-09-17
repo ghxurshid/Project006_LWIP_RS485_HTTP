@@ -1,28 +1,27 @@
 /*
- * log.c - USART1 uchun bloklamaydigan log chiqishi
+ * log.c - bloklamaydigan, halqa buferli log chiqishi
  *
- *   printf -> _write -> halqa bufer -> DMA2_Stream7 -> USART1_TX (PA9)
+ *   printf -> _write -> halqa bufer -> LogSink -> periferiya
  *
- * USART1 ni bu modul O'ZI to'liq boshqaradi:
- *   CubeMX da USART1 periferiyasi sozlanmagan (huart1 ham,
- *   MX_USART1_UART_Init() ham generatsiya qilinmaydi, HAL_UART_MODULE_ENABLED
- *   ham o'chirilgan). Log_Init() USART1 ni registr darajasida ko'taradi va
- *   uzatishni HAL DMA bilan to'g'ridan-to'g'ri &USART1->DR ga olib boradi.
- *   Shu sababli .ioc qayta generatsiya qilinganda log yo'li buzilmaydi.
+ * Bu modul PERIFERIYANI BILMAYDI (qarang log.h dagi LogSink). Periferiya
+ * CubeMX da sozlanadi, tayyor handle Log_Init() ga tashqaridan beriladi.
+ * Shu sababli:
+ *   - .ioc qayta generatsiya qilinganda bu fayl o'zgarmaydi va CubeMX
+ *     sozlagan pin/klok/NVIC ustiga hech narsa yozilmaydi;
+ *   - printf ni boshqa kanalga burish uchun faqat yangi sink yoziladi.
  *
- * Nega DMA:
- *   Eski _write har bir baytni HAL_UART_Transmit(..., HAL_MAX_DELAY) bilan
- *   yuborardi. 115200 bod da bu bayt uchun ~87us bloklash, ya'ni 60 belgilik
+ * Nega halqa bufer va fon uzatmasi:
+ *   Bloklab yuborish 115200 bod da bayt uchun ~87us, ya'ni 60 belgilik
  *   bitta log satri main loop ni ~5ms to'xtatib turadi. Shu vaqt ichida
  *   MX_LWIP_Process() chaqirilmaydi va kelayotgan ETH paketlari yo'qoladi.
- *   Bundan tashqari u qayta kirishga chidamli emas edi: ISR ichidan printf
- *   qilinsa HAL_BUSY qaytib, bayt jimgina yo'qolardi.
+ *   Bundan tashqari bloklab yuborish qayta kirishga chidamli emas: ISR
+ *   ichidan printf qilinsa HAL_BUSY qaytib, bayt jimgina yo'qolardi.
  *   Bu yerda printf faqat buferga nusxa oladi va darhol qaytadi; baytlarni
- *   fonda DMA uzatadi.
+ *   fonda sink uzatadi.
  *
  * To'lib ketish siyosati:
- *   DMA 115200 bod da atigi ~11.5 KB/s oqiza oladi, printf esa undan ancha
- *   tez yoza oladi. Shuning uchun bufer to'lishi normal holat deb qaraladi:
+ *   115200 bod atigi ~11.5 KB/s oqiza oladi, printf esa undan ancha tez
+ *   yoza oladi. Shuning uchun bufer to'lishi normal holat deb qaraladi:
  *   sig'magan xabar BUTUNLAY tashlanadi, yarim yozilmaydi. Shunda terminalga
  *   chiqqan har bir satr to'liq bo'ladi. Joy bo'shagach bo'shliq o'rniga bir
  *   marta ogohlantirish satri qo'yiladi, umumiy hisob Log_DroppedBytes() da.
@@ -38,11 +37,6 @@
 #include "main.h"   /* LED*_Pin */
 #include <string.h>
 
-/* USART1: PA9 = TX (AF7), 115200 8N1, faqat uzatish */
-#define LOG_BAUDRATE 115200u
-#define LOG_TX_PIN   GPIO_PIN_9
-#define LOG_TX_PORT  GPIOA
-
 #define BUF_MASK (LOG_TX_BUF_SIZE - 1)
 #if (LOG_TX_BUF_SIZE & BUF_MASK) != 0
 #error "LOG_TX_BUF_SIZE 2 ning darajasi bo'lishi kerak"
@@ -53,30 +47,27 @@
  *
  * Log_Flush() ning timeout i HAL_GetTick() ga, u esa TIM1 uzilishiga
  * (TICK_INT_PRIORITY = 15, eng past) bog'liq. Uzilishlar o'chirilgan
- * holatda yoki TIM1 ni uza olmaydigan ISR ichidan (DMA2_Stream7 = 13,
- * OTG_HS = 0) chaqirilsa tick umuman o'smaydi. Bitta aylanish ~100 takt,
- * ya'ni 100k aylanish 168 MHz da ~6 ms, HSI 16 MHz da ~60 ms - ikkalasi
- * ham 1 ms lik tick davridan ancha uzun, shuncha vaqtda tick qimirlamasa
- * u umuman o'smaydi degani.
+ * holatda yoki TIM1 ni uza olmaydigan ISR ichidan chaqirilsa tick umuman
+ * o'smaydi. Bitta aylanish ~100 takt, ya'ni 100k aylanish 168 MHz da
+ * ~6 ms, HSI 16 MHz da ~60 ms - ikkalasi ham 1 ms lik tick davridan ancha
+ * uzun, shuncha vaqtda tick qimirlamasa u umuman o'smaydi degani.
  */
 #define LOG_FLUSH_STUCK_SPINS 100000u
-
-/* panic_putc(): SystemCoreClock 0 yoki buzilgan bo'lsa ham TXE ni shuncha
-   aylanish kutamiz */
-#define PANIC_TX_GUARD_MIN    1000u
 
 /* panic_puts(): NUL yo'qolgan bo'lsa ham shuncha belgidan keyin to'xtaymiz.
    Eng uzun haqiqiy xabar ~15 belgi. */
 #define PANIC_PUTS_MAX        128u
 
-static DMA_HandleTypeDef hdma_usart1_tx;
+/* Tashqaridan berilgan chiqish kanali. NULL - kanal hali ulanmagan:
+   printf lar buferda to'planadi, lekin uzatilmaydi. */
+static const LogSink    *s_sink;
 
 static uint8_t           s_buf[LOG_TX_BUF_SIZE];
 static volatile uint16_t s_head;     /* keyingi yoziladigan joy */
-static volatile uint16_t s_tail;     /* DMA o'qiyotgan joy */
-static volatile uint16_t s_chunk;    /* joriy DMA uzatmasining uzunligi */
-static volatile uint8_t  s_busy;     /* DMA hozir band */
-static volatile uint8_t  s_ready;    /* Log_Init() muvaffaqiyatli bajarildi */
+static volatile uint16_t s_tail;     /* sink o'qiyotgan joy */
+static volatile uint16_t s_chunk;    /* joriy uzatmaning uzunligi */
+static volatile uint8_t  s_busy;     /* sink hozir band */
+static volatile uint8_t  s_ready;    /* Log_Init() kamida bir marta chaqirildi */
 static volatile uint8_t  s_overflow; /* oxirgi belgilanishdan beri xabar tashlandi */
 static volatile uint32_t s_dropped;
 static volatile uint8_t  s_enabled = 1u; /* debug chiqishi (config dan) */
@@ -90,13 +81,13 @@ static const char s_ovf_msg[] = "\r\n[LOG] <<< bufer to'ldi, xabarlar tashlandi 
 static char s_stdout_buf[256];
 
 /**
- * Navbatdagi bo'lakni DMA ga beradi.
+ * Navbatdagi bo'lakni sink ga beradi.
  *
- * O'zi kritik seksiya bilan himoyalangan: uni ham main loop, ham TxCplt
- * uzilishi chaqiradi. Himoyasiz bo'lsa, s_busy tekshiruvi bilan s_busy=1
- * o'rtasida yuqori ustuvorlikdagi ISR kirib, ikkinchi
- * DMA uzatmasini boshlab yuborishi va s_chunk ni buzishi mumkin edi.
- * Ichma-ich chaqirilsa ham xavfsiz - PRIMASK saqlanib tiklanadi.
+ * O'zi kritik seksiya bilan himoyalangan: uni ham main loop, ham uzatma
+ * tugaganini bildiruvchi ISR (Log_TxDone) chaqiradi. Himoyasiz bo'lsa,
+ * s_busy tekshiruvi bilan s_busy=1 o'rtasida yuqori ustuvorlikdagi ISR
+ * kirib, ikkinchi uzatmani boshlab yuborishi va s_chunk ni buzishi mumkin
+ * edi. Ichma-ich chaqirilsa ham xavfsiz - PRIMASK saqlanib tiklanadi.
  */
 static void log_kick(void)
 {
@@ -105,7 +96,7 @@ static void log_kick(void)
 
   __disable_irq();
 
-  if (s_busy || !s_ready)
+  if (s_busy || !s_ready || (s_sink == NULL))
   {
     goto out;
   }
@@ -117,16 +108,15 @@ static void log_kick(void)
     goto out;                       /* bufer bo'sh */
   }
 
-  /* DMA faqat uzluksiz blokni yubora oladi - buferning oxirigacha kesamiz,
-     qolgani keyingi DMA TC uzilishida yuboriladi */
+  /* Ko'pchilik kanal (DMA) faqat uzluksiz blokni yubora oladi - buferning
+     oxirigacha kesamiz, qolgani keyingi Log_TxDone() da yuboriladi */
   len = (head > tail) ? (uint16_t)(head - tail)
                       : (uint16_t)(LOG_TX_BUF_SIZE - tail);
 
   s_chunk = len;
   s_busy  = 1;
 
-  if (HAL_DMA_Start_IT(&hdma_usart1_tx, (uint32_t)&s_buf[tail],
-                       (uint32_t)&USART1->DR, len) != HAL_OK)
+  if (!s_sink->start(s_sink->ctx, &s_buf[tail], len))
   {
     s_chunk = 0;
     s_busy  = 0;
@@ -228,7 +218,7 @@ void Log_Write(const char *data, uint16_t len)
     s_dropped  += len;
     s_overflow  = 1;
     __set_PRIMASK(primask);
-    log_kick();                     /* DMA to'xtab qolgan bo'lsa turtamiz */
+    log_kick();                     /* sink to'xtab qolgan bo'lsa turtamiz */
     return;
   }
 
@@ -269,10 +259,50 @@ void Log_Write(const char *data, uint16_t len)
   log_kick();
 }
 
+/* ================= Sink dan keladigan xabarlar ================= */
+
+void Log_TxDone(void)
+{
+  uint32_t primask = __get_PRIMASK();
+
+  __disable_irq();
+  s_tail  = (uint16_t)((s_tail + s_chunk) & BUF_MASK);
+  s_chunk = 0;
+  s_busy  = 0;
+  __set_PRIMASK(primask);
+
+  log_kick();                     /* wrap bo'lgan qoldiq / yangi ma'lumot */
+}
+
+/*
+ * Uzatma xatosi: joriy bo'lakni tashlab, navbatdagisiga o'tamiz - aks holda
+ * s_busy abadiy 1 bo'lib qolib, log butunlay to'xtardi.
+ */
+void Log_TxFailed(void)
+{
+  uint32_t primask = __get_PRIMASK();
+
+  __disable_irq();
+  s_dropped += s_chunk;
+  s_tail  = (uint16_t)((s_tail + s_chunk) & BUF_MASK);
+  s_chunk = 0;
+  s_busy  = 0;
+  __set_PRIMASK(primask);
+
+  log_kick();
+}
+
 void Log_Flush(uint32_t timeout_ms)
 {
   uint32_t start = HAL_GetTick();
   uint32_t spins = 0u;
+
+  /* Kanal ulanmagan bo'lsa bufer hech qachon bo'shamaydi - butun timeout ni
+     bekorga kutib turmaymiz */
+  if (!s_ready || (s_sink == NULL))
+  {
+    return;
+  }
 
   /* HAL_GetTick() TIM1 uzilishiga bog'liq, shuning uchun bu funksiya
      uzilishlar yoqilgan holatda chaqirilishi kerak. Noto'g'ri kontekstda
@@ -309,6 +339,8 @@ uint32_t Log_DroppedBytes(void)
   return s_dropped;
 }
 
+/* ================= Panik yo'li ================= */
+
 /* Panik holatida HAL_Delay/HAL_GetTick ga ishonib bo'lmaydi: uzilishlar
    o'chirilgan yoki klok umuman noto'g'ri bo'lishi mumkin */
 static void panic_delay(uint32_t loops)
@@ -320,35 +352,15 @@ static void panic_delay(uint32_t loops)
   }
 }
 
-/*
- * DMA va uzilishlarsiz bitta bayt. Cheklangan kutish - TXE hech qachon
- * kelmasa ham osilib qolmaymiz.
- *
- * Chegara SystemCoreClock ga bog'langan (panic_delay() bilan bir xil
- * uslub): 168 MHz da ham, PLL ko'tarilmay HSI 16 MHz da qolganda ham
- * kutish ~1 ms atrofida chiqadi. 115200 bod da bitta belgi ~87 us,
- * ya'ni zaxira ~10 barobar.
- *
- * Nega o'zgartirildi: avval bu 400000 ta qat'iy aylanish edi, ya'ni bayt
- * uchun ~20 ms. TX o'lik bo'lsa (TE o'chiq, PA9 tutashgan, klok buzilgan)
- * to'la buferni chiqarishga urinish o'nlab soniya davom etib, panik LED
- * lari shuncha vaqt ko'rinmasdi - osilib qolgandek tuyulardi. Endi eng
- * yomon holat ~2 soniya.
- */
+/* Bitta bayt sink orqali. Kanal put_blocking() bermasa jimgina tashlanadi -
+   LED signali baribir ishlaydi. Cheklangan vaqtda qaytish mas'uliyati
+   sink da (qarang log.h). */
 static void panic_putc(char c)
 {
-  uint32_t guard = SystemCoreClock / 20000u;
-
-  if (guard < PANIC_TX_GUARD_MIN)
+  if ((s_sink != NULL) && (s_sink->put_blocking != NULL))
   {
-    guard = PANIC_TX_GUARD_MIN;       /* SystemCoreClock 0 yoki buzilgan */
+    s_sink->put_blocking(s_sink->ctx, (uint8_t)c);
   }
-
-  while (((USART1->SR & USART_SR_TXE) == 0u) && (guard > 0u))
-  {
-    guard--;
-  }
-  USART1->DR = (uint16_t)((uint8_t)c);
 }
 
 /* NUL topilmasa ham to'xtaydi: bu funksiya fault ishlovchisidan
@@ -408,9 +420,9 @@ void Log_Panic(const char *msg, uint8_t blinks)
 
   __disable_irq();
 
-  /* USART1 kloki yoqilgan bo'lsagina chiqarishga urinamiz - aks holda
-     klok berilmagan periferiyaga murojaat qilgan bo'lardik */
-  if ((RCC->APB2ENR & RCC_APB2ENR_USART1EN) != 0u)
+  /* Kanal berilgan va u bloklab yozishni qo'llab-quvvatlasagina matn
+     chiqarishga urinamiz */
+  if ((s_sink != NULL) && (s_sink->put_blocking != NULL))
   {
     /* Indekslarni mahalliy nusxaga olib, DARHOL maskalaymiz.
        Bu funksiya HardFault/MemManage/BusFault/UsageFault dan chaqiriladi,
@@ -427,7 +439,10 @@ void Log_Panic(const char *msg, uint8_t blinks)
     uint16_t head  = (uint16_t)(s_head & BUF_MASK);
     uint16_t guard = LOG_TX_BUF_SIZE;
 
-    DMA2_Stream7->CR &= ~DMA_SxCR_EN;   /* yarim qolgan uzatmani to'xtatamiz */
+    if (s_sink->abort != NULL)
+    {
+      s_sink->abort(s_sink->ctx);     /* yarim qolgan fon uzatmasini to'xtatamiz */
+    }
 
     while ((tail != head) && (guard-- > 0u))  /* buferdagi qoldiqni chiqaramiz */
     {
@@ -468,137 +483,31 @@ void Log_Panic(const char *msg, uint8_t blinks)
   }
 }
 
-/**
- * USART1 ni registr darajasida ko'taradi: PA9 -> AF7, 115200 8N1, TE + DMAT.
- * RX kerak emas (log faqat chiqish uchun), shuning uchun RE yoqilmaydi.
- */
-static void usart1_init(void)
+/* ================= Ishga tushirish ================= */
+
+void Log_Init(const LogSink *sink)
 {
-  GPIO_InitTypeDef gpio = {0};
-  uint32_t         pclk, div, mant, frac;
-
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_USART1_CLK_ENABLE();
-
-  gpio.Pin       = LOG_TX_PIN;
-  gpio.Mode      = GPIO_MODE_AF_PP;
-  gpio.Pull      = GPIO_NOPULL;
-  gpio.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
-  gpio.Alternate = GPIO_AF7_USART1;
-  HAL_GPIO_Init(LOG_TX_PORT, &gpio);
-
-  USART1->CR1 = 0u;                   /* sozlashdan oldin o'chiramiz */
-  USART1->CR2 = 0u;                   /* 1 stop bit */
-  USART1->CR3 = USART_CR3_DMAT;       /* TX so'rovlari DMA ga boradi */
-
-  /* BRR, OVER8=0 (16x sampling). HAL ning UART_BRR_SAMPLING16 mantiqi:
-     kasr qism 16 ga yumaloqlansa, o'sha bir birlik mantissaga qo'shiladi.
-     HAL_UART_MODULE_ENABLED o'chirilgani uchun makros mavjud emas - qo'lda. */
-  pclk = HAL_RCC_GetPCLK2Freq();
-  div  = (pclk * 25u) / (4u * LOG_BAUDRATE);
-  mant = div / 100u;
-  frac = (((div - (mant * 100u)) * 16u) + 50u) / 100u;
-  USART1->BRR = (uint16_t)((mant << 4) + (frac & 0xF0u) + (frac & 0x0Fu));
-
-  USART1->CR1 = USART_CR1_TE | USART_CR1_UE;
-}
-
-/**
- * DMA bo'lagi tugadi: tail ni surib, navbatdagisini boshlaymiz.
- *
- * DMA TC oxirgi bayt DR ga yozilganda keladi - bayt hali shift registrda
- * bo'lishi mumkin, lekin buferdagi joy allaqachon bo'shagan, shuning uchun
- * keyingi uzatmani darhol boshlash xavfsiz (DMA baribir TXE ni kutadi).
- */
-static void log_dma_cplt(DMA_HandleTypeDef *hdma)
-{
-  uint32_t primask = __get_PRIMASK();
-
-  (void)hdma;
-
-  __disable_irq();
-  s_tail  = (uint16_t)((s_tail + s_chunk) & BUF_MASK);
-  s_chunk = 0;
-  s_busy  = 0;
-  __set_PRIMASK(primask);
-
-  log_kick();                     /* wrap bo'lgan qoldiq / yangi ma'lumot */
-}
-
-/**
- * DMA xatosi: joriy bo'lakni tashlab, navbatdagisiga o'tamiz - aks holda
- * s_busy abadiy 1 bo'lib qolib, log butunlay to'xtardi.
- */
-static void log_dma_error(DMA_HandleTypeDef *hdma)
-{
-  uint32_t primask = __get_PRIMASK();
-
-  (void)hdma;
-
-  __disable_irq();
-  s_dropped += s_chunk;
-  s_tail  = (uint16_t)((s_tail + s_chunk) & BUF_MASK);
-  s_chunk = 0;
-  s_busy  = 0;
-  __set_PRIMASK(primask);
-
-  log_kick();
-}
-
-void Log_Init(void)
-{
-  /* Satrli buferlash: printf ichida malloc chaqirilmaydi va har bir log
-     satri _write ga bitta chaqiruv bo'lib tushadi (belgi-belgi emas).
-     Bufer 256 bayt - undan uzun satrni newlib bo'lib yuboradi, u holda
-     "butun xabarni tashlash" kafolati bo'lak darajasida ishlaydi. */
-  setvbuf(stdout, s_stdout_buf, _IOLBF, sizeof(s_stdout_buf));
-
-  usart1_init();
-
-  __HAL_RCC_DMA2_CLK_ENABLE();
-
-  /* USART1_TX = DMA2, Stream 7, Channel 4 (RM0090, Table 43) */
-  hdma_usart1_tx.Instance                 = DMA2_Stream7;
-  hdma_usart1_tx.Init.Channel             = DMA_CHANNEL_4;
-  hdma_usart1_tx.Init.Direction           = DMA_MEMORY_TO_PERIPH;
-  hdma_usart1_tx.Init.PeriphInc           = DMA_PINC_DISABLE;
-  hdma_usart1_tx.Init.MemInc              = DMA_MINC_ENABLE;
-  hdma_usart1_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-  hdma_usart1_tx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
-  hdma_usart1_tx.Init.Mode                = DMA_NORMAL;
-  hdma_usart1_tx.Init.Priority            = DMA_PRIORITY_LOW;
-  hdma_usart1_tx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
-
-  if (HAL_DMA_Init(&hdma_usart1_tx) != HAL_OK)
+  if (!s_ready)
   {
-    return;                       /* s_ready = 0 -> _write jimgina tashlaydi */
+    /* Satrli buferlash: printf ichida malloc chaqirilmaydi va har bir log
+       satri _write ga bitta chaqiruv bo'lib tushadi (belgi-belgi emas).
+       Bufer 256 bayt - undan uzun satrni newlib bo'lib yuboradi, u holda
+       "butun xabarni tashlash" kafolati bo'lak darajasida ishlaydi.
+       BIRINCHI printf dan OLDIN bajarilishi shart, aks holda newlib
+       stdout uchun buferni o'zi malloc qilib oladi. */
+    setvbuf(stdout, s_stdout_buf, _IOLBF, sizeof(s_stdout_buf));
+    s_ready = 1;
   }
 
-  /* HAL_DMA_Start_IT bulardan TC va TE/DME uzilishlarini yoqadi;
-     XferHalfCpltCallback NULL qolgani uchun HT uzilishi yoqilmaydi */
-  hdma_usart1_tx.XferCpltCallback  = log_dma_cplt;
-  hdma_usart1_tx.XferErrorCallback = log_dma_error;
+  /* start() majburiy - usiz kanal bilan gaplashib bo'lmaydi. abort() va
+     put_blocking() ixtiyoriy, ular faqat panik yo'lida ishlatiladi. */
+  if ((sink != NULL) && (sink->start != NULL))
+  {
+    s_sink = sink;
+  }
 
-  /* Log eng past ustuvorlikda - hech qachon boshqa periferiyalarning
-     taymingini kechiktirmasin */
-  HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 13, 0);
-  HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
-
-  s_ready = 1;
-}
-
-/* ================= Uzilish ishlovchisi =================
- * startup_stm32f407vetx.s da bu weak, shuning uchun bu yerda aniqlash mumkin.
- * Shu bilan CubeMX qayta generatsiyasi stm32f4xx_it.c ni yangilaganda ham log
- * yo'li buzilmaydi.
- * DIQQAT: agar keyinchalik CubeMX da DMA2_Stream7 ishlatilsa, stm32f4xx_it.c
- * ga DMA2_Stream7_IRQHandler qo'shiladi va dublikat simvol xatosi beradi -
- * u holda quyidagini o'chirish kerak.
- */
-
-void DMA2_Stream7_IRQHandler(void)
-{
-  HAL_DMA_IRQHandler(&hdma_usart1_tx);
+  /* Kanal endi ulangan bo'lsa, 1-bosqichdan beri to'plangani chiqib ketadi */
+  log_kick();
 }
 
 void Log_SetEnabled(bool enabled)

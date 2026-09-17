@@ -34,7 +34,7 @@
 #define CONFIG_PROD_SERVER_PORT 5488
 
 /* Sinov serveri - #SRV=TEST shunga o'tkazadi */
-#define CONFIG_TEST_SERVER_IP   "10.0.40.18"
+#define CONFIG_TEST_SERVER_IP   "10.0.40.182"
 #define CONFIG_TEST_SERVER_PORT 23
 
 /* Zavod holatida debug chiqishi yoqilgan */
